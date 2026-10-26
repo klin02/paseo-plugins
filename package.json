@@ -1,0 +1,10 @@
+{
+  "name": "@klin02/paseo-plugins",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": ["file-bridge"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test --workspaces"
+  }
+}

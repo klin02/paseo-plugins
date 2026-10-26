@@ -1,0 +1,41 @@
+{
+  "name": "@klin02/paseo-file-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "README.md",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/",
+    "scripts/"
+  ],
+  "scripts": {
+    "assets": "node scripts/build-assets.mjs",
+    "typecheck": "npm run assets && tsc --noEmit",
+    "test": "npm run assets && node --experimental-strip-types --test tests/*.test.ts && python3 -m unittest discover -s tests -p 'test_*.py' -v"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.13.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  },
+  "description": "Transfer files between a Windows local daemon and an SSH coordinator with one active desktop worker.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klin02/paseo-plugins.git",
+    "directory": "file-bridge"
+  },
+  "homepage": "https://github.com/klin02/paseo-plugins/tree/main/file-bridge",
+  "bugs": {
+    "url": "https://github.com/klin02/paseo-plugins/issues"
+  }
+}

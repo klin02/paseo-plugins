@@ -1,0 +1,6 @@
+{
+  "id": "file-bridge",
+  "name": "File Bridge",
+  "description": "Windows 与 node030 文件互传和单机独占控制。",
+  "requirements": {"paseo": ">=0.13.0 <0.14.0"}
+}
