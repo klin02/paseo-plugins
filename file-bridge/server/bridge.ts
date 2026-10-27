@@ -97,11 +97,12 @@ export class Bridge {
         return;
       }
       const config = await this.readSettings();
+      const stagingArgs = config.stagingDirectory ? ["-StagingDirectory", config.stagingDirectory] : [];
       this.sessionId = randomUUID().replaceAll("-", "");
       this.state = "connecting"; this.error = null;
       const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", join(this.root, "start-desktop-transfer.ps1"),
         "-SshHost", config.sshHost, "-RemoteScript", config.remoteScript,
-        "-DeviceId", this.deviceId, "-SessionId", this.sessionId, "-DeviceName", this.deviceName, "-WatchParent"],
+        "-DeviceId", this.deviceId, "-SessionId", this.sessionId, "-DeviceName", this.deviceName, "-WatchParent", ...stagingArgs],
         { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       this.child = child;
       let stderr = "";

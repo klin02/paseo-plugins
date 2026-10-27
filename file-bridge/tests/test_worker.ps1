@@ -3,7 +3,7 @@ $worker = Join-Path $PSScriptRoot '../server/start-desktop-transfer.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($worker, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Get-Hash', 'Assert-NoReparsePath', 'Read-TransferFile', 'Remove-EmptyStage')) {
+foreach ($name in @('Get-Hash', 'Assert-NoReparsePath', 'Read-TransferFile', 'Remove-EmptyStage', 'Get-StageBase')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -12,6 +12,14 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
     $caught = $false
     try { & $Action | Out-Null } catch { $caught = $true }
     Assert-True $caught $Message
+}
+Assert-True ((Get-StageBase '') -eq (Join-Path ([IO.Path]::GetTempPath()) 'file-bridge')) 'Default Temp staging changed'
+foreach ($invalid in @('relative', 'C:relative', '\\server\share', 'C:\temp\..\other', "C:\temp`nother")) {
+    Assert-Throws { Get-StageBase $invalid } 'Invalid staging directory was accepted'
+}
+if ($PSVersionTable.Platform -ne 'Unix') {
+    $workspace = Join-Path ([IO.Path]::GetTempPath()) 'workspace-stage'
+    Assert-True ((Get-StageBase $workspace) -eq (Join-Path $workspace 'file-bridge')) 'Custom staging directory was ignored'
 }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('file-bridge-worker-test-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null

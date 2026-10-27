@@ -7,6 +7,10 @@ export const preferences = defineSettings({
     sshHost: z.string().regex(/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]*$/).refine(v => !/[\r\n]/.test(v)).default("node030"),
     remoteScript: z.string().regex(/^(?:\/|\.)[A-Za-z0-9_./-]+$/).refine(v => !/[\r\n]/.test(v) && !v.split("/").includes("..")).default(".paseo/plugin-data/file-bridge/desktop_transfer.py"),
     autoStart: z.boolean().default(false),
+    stagingDirectory: z.string().max(4096).refine(v => v === "" || (/^[A-Za-z]:[\\/]/.test(v) &&
+      !/[<>:"|?*\x00-\x1f\x7f]/.test(v.slice(2)) &&
+      !v.slice(3).split(/[\\/]/).some(part => part === ".." || /[. ]$/.test(part))),
+      "暂存目录必须为空或 Windows 盘符绝对路径，不允许父目录跳转。").default(""),
   }),
 });
 export type Preferences = z.output<typeof preferences.schema>;

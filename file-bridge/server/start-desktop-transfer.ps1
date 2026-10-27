@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$DeviceId,
     [Parameter(Mandatory=$true)][string]$SessionId,
     [string]$DeviceName = $env:COMPUTERNAME,
+    [string]$StagingDirectory = '',
     [switch]$WatchParent,
     [ValidateRange(10,1800)][int]$WaitSeconds = 300
 )
@@ -91,6 +92,18 @@ function Assert-NoReparsePath([string]$Path) {
     }
 }
 
+function Get-StageBase([string]$Directory) {
+    if ($Directory -eq '') { return Join-Path ([IO.Path]::GetTempPath()) 'file-bridge' }
+    if ($Directory -notmatch '^[A-Za-z]:[\\/]' -or
+        $Directory.Substring(2) -match '[<>:"|?*\x00-\x1f\x7f]' -or
+        @($Directory.Substring(3) -split '[\\/]' | Where-Object { $_ -eq '..' -or $_ -match '[. ]$' }).Count -gt 0) {
+        throw 'StagingDirectory must be an absolute Windows drive directory without parent traversal.'
+    }
+    $base = Join-Path ([IO.Path]::GetFullPath($Directory)) 'file-bridge'
+    Assert-NoReparsePath $base
+    return $base
+}
+
 function Read-TransferFile([string]$Path) {
     Assert-NoReparsePath $Path
     if (-not [IO.File]::Exists($Path)) { throw "File does not exist: $Path" }
@@ -128,7 +141,7 @@ if ($SshHost -cnotmatch '\A(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-
 if ($RemoteScript -cnotmatch '\A(?:/|\.)[A-Za-z0-9_./-]+\z' -or $RemoteScript.Split('/') -contains '..') { throw 'RemoteScript must be a simple Unix path without parent traversal.' }
 if ($DeviceId -cnotmatch '\A[a-f0-9]{32}\z' -or $SessionId -cnotmatch '\A[a-f0-9]{32}\z') { throw 'DeviceId and SessionId must be lowercase UUID hex strings.' }
 if ($DeviceName -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\z') { throw 'DeviceName must be a simple computer name.' }
-$base = Join-Path ([IO.Path]::GetTempPath()) 'file-bridge'
+$base = Get-StageBase $StagingDirectory
 Assert-NoReparsePath $base
 [IO.Directory]::CreateDirectory($base) | Out-Null
 $info = [Diagnostics.ProcessStartInfo]::new()
@@ -183,7 +196,7 @@ public static class AskGptParentWatch {
         throw 'SSH worker ready identity mismatch.'
     }
     [Console]::Out.WriteLine((@{ event='connected'; deviceId=$DeviceId; sessionId=$SessionId; deviceName=$DeviceName } | ConvertTo-Json -Compress))
-    [Console]::Error.WriteLine("file-bridge file worker active. Temp root: $base")
+    [Console]::Error.WriteLine("file-bridge file worker active. Staging root: $base")
     while ($null -ne ($line = $bridge.StandardOutput.ReadLine())) {
         $job = $line | ConvertFrom-Json
         if ($job.ack) { throw 'Unexpected acknowledgement outside a transfer.' }

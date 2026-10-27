@@ -16,6 +16,7 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
   const [busy, setBusy] = useState(false);
   const [sshHost, setSshHost] = useState("");
   const [remoteScript, setRemoteScript] = useState("");
+  const [stagingDirectory, setStagingDirectory] = useState("");
   const [autoStart, setAutoStart] = useState(false);
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
@@ -30,6 +31,7 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
   useEffect(() => {
     if (settings.status === "ready") {
       setSshHost(settings.values.sshHost); setRemoteScript(settings.values.remoteScript); setAutoStart(settings.values.autoStart);
+      setStagingDirectory(settings.values.stagingDirectory);
     }
   }, [settings.status, settings.status === "ready" ? settings.revision : null]);
 
@@ -96,9 +98,10 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
       {settings.status === "ready" ? <>
         {field("SSH 主机（使用已有 SSH 配置/密钥）", sshHost, setSshHost)}
         {field("远程 Python 脚本路径（绝对路径或 .paseo/…）", remoteScript, setRemoteScript)}
+        {field("Windows 暂存父目录（留空使用 Temp；直接网页上传需在 agent 工作区内）", stagingDirectory, setStagingDirectory)}
         {button(`插件启动时自动取得控制权：${autoStart ? "开" : "关"}`, () => setAutoStart(!autoStart))}
         {button("保存设置（先停止当前助手）", () => void act(async () => {
-          const values = preferences.schema.parse({ sshHost, remoteScript, autoStart });
+          const values = preferences.schema.parse({ sshHost, remoteScript, autoStart, stagingDirectory });
           if (!await settings.save(values, settings.revision)) throw new Error("设置保存失败或版本冲突，请刷新。");
         }))}
       </> : <Text style={muted}>{settings.status === "loading" ? "读取设置…" : settings.error}</Text>}
@@ -110,12 +113,13 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
       {field("接收目标：node030 全新文件绝对路径（不覆盖）", destination, setDestination)}
       {field("接收文件名（取回或网页下载时填写）", filename, setFilename)}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {button("node030 → Windows Temp", () => void submit("push"))}
+        {button("node030 → Windows 暂存目录", () => void submit("push"))}
         {button("Windows → node030", () => void submit("pull"))}
         {button("为网页选择上传附件", () => void submit("upload"))}
         {button("接收网页下载", () => void submit("download"))}
       </View>
       <Text style={muted}>网页动作提交后，在持有控制权的 Windows Paseo 打开对应的文件选择/保存窗口。选择完成仍须检查网页附件处理完成；通用互传无需浏览器。</Text>
+      <Text style={muted}>直接调用 browser_upload 时，先发送到 Windows 暂存目录，再使用完成任务的 stage_path；暂存父目录须位于该 agent 的 Windows 工作区。不要将 node030 路径直接当作本地文件。</Text>
     </View>
     {selected && <View style={box}>
       <Text style={{ ...foreground, fontWeight: "bold" }}>当前任务：{selected.action} · {selected.state}</Text>
@@ -125,7 +129,7 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
       {selected.error && <Text style={foreground} selectable>{selected.error}</Text>}
       {selected.state === "completed" && ["push", "upload"].includes(selected.action) && <>
         {button(`确认文件已用完／网页已处理完成：${cleanupConfirmed ? "是" : "否"}`, () => setCleanupConfirmed(!cleanupConfirmed))}
-        {button("清理这个 Windows Temp 文件", () => void submit("cleanup-upload"), busy || !cleanupConfirmed)}
+        {button("清理这个 Windows 暂存文件", () => void submit("cleanup-upload"), busy || !cleanupConfirmed)}
       </>}
     </View>}
     <View style={box}>
