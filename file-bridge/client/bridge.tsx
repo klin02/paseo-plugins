@@ -18,6 +18,9 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
   const [remoteScript, setRemoteScript] = useState("");
   const [stagingDirectory, setStagingDirectory] = useState("");
   const [autoStart, setAutoStart] = useState(false);
+  const [browserEnabled, setBrowserEnabled] = useState(false);
+  const [browserAgentId, setBrowserAgentId] = useState("");
+  const [browserMcpUrl, setBrowserMcpUrl] = useState("http://127.0.0.1:6767/mcp/agents");
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
   const [filename, setFilename] = useState("");
@@ -32,6 +35,9 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
     if (settings.status === "ready") {
       setSshHost(settings.values.sshHost); setRemoteScript(settings.values.remoteScript); setAutoStart(settings.values.autoStart);
       setStagingDirectory(settings.values.stagingDirectory);
+      setBrowserEnabled(settings.values.browserEnabled);
+      setBrowserAgentId(settings.values.browserAgentId);
+      setBrowserMcpUrl(settings.values.browserMcpUrl);
     }
   }, [settings.status, settings.status === "ready" ? settings.revision : null]);
 
@@ -99,9 +105,14 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
         {field("SSH 主机（使用已有 SSH 配置/密钥）", sshHost, setSshHost)}
         {field("远程 Python 脚本路径（绝对路径或 .paseo/…）", remoteScript, setRemoteScript)}
         {field("Windows 暂存父目录（例如 D:\\PaseoFiles；留空使用 Temp）", stagingDirectory, setStagingDirectory)}
+        {field("本地浏览器 daemon MCP URL", browserMcpUrl, setBrowserMcpUrl)}
+        {field("Windows 本地浏览器 agent ID", browserAgentId, setBrowserAgentId)}
+        {button(`允许 node030 浏览器任务：${browserEnabled ? "开" : "关"}`, () => setBrowserEnabled(!browserEnabled))}
+        <Text style={muted}>只接受当前 File Bridge 会话的任务。上传仅设置文件输入框；页面处理完成后再发送消息。隐藏输入框需要本地 Desktop 补丁。</Text>
+        {status?.browserError && <Text accessibilityRole="alert" style={foreground} selectable>{status.browserError}</Text>}
         {button(`插件启动时自动取得控制权：${autoStart ? "开" : "关"}`, () => setAutoStart(!autoStart))}
         {button("保存设置（先停止当前助手）", () => void act(async () => {
-          const values = preferences.schema.parse({ sshHost, remoteScript, autoStart, stagingDirectory });
+          const values = preferences.schema.parse({ sshHost, remoteScript, autoStart, stagingDirectory, browserEnabled, browserAgentId, browserMcpUrl });
           if (!await settings.save(values, settings.revision)) throw new Error("设置保存失败或版本冲突，请刷新。");
         }))}
       </> : <Text style={muted}>{settings.status === "loading" ? "读取设置…" : settings.error}</Text>}

@@ -7,6 +7,12 @@ export const preferences = defineSettings({
     sshHost: z.string().regex(/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]*$/).refine(v => !/[\r\n]/.test(v)).default("node030"),
     remoteScript: z.string().regex(/^(?:\/|\.)[A-Za-z0-9_./-]+$/).refine(v => !/[\r\n]/.test(v) && !v.split("/").includes("..")).default(".paseo/plugin-data/file-bridge/desktop_transfer.py"),
     autoStart: z.boolean().default(false),
+    browserEnabled: z.boolean().default(false),
+    browserAgentId: z.string().regex(/^(?:[a-f0-9-]{36})?$/i).default(""),
+    browserMcpUrl: z.string().refine(value => {
+      try { const url = new URL(value); return url.protocol === "http:" && url.hostname === "127.0.0.1" &&
+        !url.username && !url.password && !url.search && !url.hash && url.pathname === "/mcp/agents"; } catch { return false; }
+    }, "Browser endpoint must target an explicit Windows-local daemon").default("http://127.0.0.1:6767/mcp/agents"),
     stagingDirectory: z.string().max(4096).refine(v => v === "" || (/^[A-Za-z]:[\\/]/.test(v) &&
       !/[<>:"|?*\x00-\x1f\x7f]/.test(v.slice(2)) &&
       !v.slice(3).split(/[\\/]/).some(part => part === ".." || /[. ]$/.test(part))),
@@ -32,6 +38,7 @@ export const statusSchema = z.object({
   ownership: z.enum(["none", "managed", "same-device"]).default("none"),
   notice: z.string().nullable().default(null),
   error: z.string().nullable(), coordinator: ownerSchema.nullable(),
+  browserError: z.string().nullable().optional(),
   jobs: z.array(jobSchema),
 });
 export const bridgeStatus = defineRpc({name: "bridge.status", input: z.object({}), output: statusSchema});

@@ -1,6 +1,6 @@
 {
   "name": "@klin02/paseo-file-bridge",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "files": [
@@ -17,6 +17,7 @@
   "scripts": {
     "assets": "node scripts/build-assets.mjs",
     "typecheck": "npm run assets && tsc --noEmit",
+    "test:portable": "npm run assets && node --experimental-strip-types --test tests/browser-worker.test.ts tests/lifecycle.test.ts",
     "test": "npm run assets && node --experimental-strip-types --test tests/*.test.ts && python3 -m unittest discover -s tests -p 'test_*.py' -v"
   },
   "devDependencies": {

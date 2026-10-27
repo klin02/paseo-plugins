@@ -343,6 +343,108 @@ def cleanup(job_id):
     return dict(id=job_id, state="cleaned")
 
 
+def browser_directory(job_id=None):
+    root = state_dir() / ".browser"
+    root.mkdir(exist_ok=True, mode=0o700)
+    if job_id is None:
+        return root
+    if not ID_PATTERN.fullmatch(job_id):
+        raise ValueError("invalid browser task ID")
+    directory = root / job_id
+    if directory.is_symlink():
+        raise ValueError("browser task directory must not be a symbolic link")
+    return directory
+
+
+def browser_queue(command, browser_id=None, ref=None, source=None, expected=None):
+    if command not in ("list_tabs", "snapshot", "upload"):
+        raise ValueError("unsupported File Bridge browser command")
+    if command != "list_tabs" and not re.fullmatch(r"[A-Za-z0-9-]{1,128}", browser_id or ""):
+        raise ValueError("browser ID is required")
+    if command == "upload" and not re.fullmatch(r"@e[0-9]+", ref or ""):
+        raise ValueError("upload requires a file-input ref from a fresh browser snapshot")
+    transfer = queue_upload(source, "push", expected=expected) if command == "upload" else None
+    with state_lock():
+        active = worker_status()
+        if not active["worker_connected"]:
+            raise ValueError("Windows transfer worker is offline")
+        fence = transfer or expected
+        if fence and any(active.get(k) != fence.get(k) for k in ("device_id", "session_id")):
+            raise ValueError("Windows device/session changed before browser task publication")
+        task = dict(id=uuid.uuid4().hex, command=command, state="pending", created_at=time.time(),
+                    device_id=active["device_id"], session_id=active["session_id"])
+        if browser_id:
+            task["browser_id"] = browser_id
+        if ref:
+            task["ref"] = ref
+        if transfer:
+            task["upload_id"] = transfer["id"]
+        directory = browser_directory(task["id"])
+        directory.mkdir(mode=0o700)
+        atomic_json(directory / "request.json", task)
+        return task
+
+
+def browser_status(job_id):
+    return read_json(browser_directory(job_id) / "request.json")
+
+
+def browser_next(device_id, session_id):
+    if not all(ID_PATTERN.fullmatch(value) for value in (device_id, session_id)):
+        raise ValueError("invalid browser worker identity")
+    with state_lock():
+        active = worker_status()
+        if not active["worker_connected"] or active.get("device_id") != device_id or active.get("session_id") != session_id:
+            raise ValueError("browser worker must match the active transfer device/session")
+        for path in sorted(browser_directory().glob("*/request.json"), key=lambda p: p.stat().st_mtime_ns):
+            task = read_json(path)
+            if task["state"] not in ("pending", "running"):
+                continue
+            if task["device_id"] != device_id or task["session_id"] != session_id:
+                task.update(state="failed", error="browser task belongs to another device/session; refusing replay")
+                atomic_json(path, task)
+                continue
+            if task["state"] == "running":
+                if time.time() - task["started_at"] > 120:
+                    task.update(state="failed", error="browser execution acknowledgement lost; not replayed")
+                    atomic_json(path, task)
+                continue
+            if task["command"] == "upload":
+                transfer = status(task["upload_id"])
+                if transfer["state"] == "failed":
+                    task.update(state="failed", error="staging transfer failed: " + transfer.get("error", "unknown"))
+                    atomic_json(path, task)
+                    continue
+                if transfer["state"] != "completed":
+                    continue
+                if any(transfer.get(k) != task[k] for k in ("device_id", "session_id")):
+                    raise ValueError("upload transfer owner does not match browser task")
+                task.update(stage_path=transfer["stage_path"], size=transfer["size"], sha256=transfer["sha256"],
+                            filename=transfer["filename"])
+            task.update(state="running", started_at=time.time())
+            atomic_json(path, task)
+            return dict(task=task)
+        return dict(task=None)
+
+
+def browser_complete(job_id, device_id, session_id, response):
+    if len(response.encode("utf-8")) > 160000:
+        raise ValueError("browser result exceeds limit")
+    result = json.loads(response)
+    if not isinstance(result, dict) or type(result.get("ok")) is not bool:
+        raise ValueError("browser result requires a boolean ok")
+    with state_lock():
+        task = browser_status(job_id)
+        active = worker_status()
+        if (not active["worker_connected"] or task["state"] != "running" or
+                any(task.get(k) != v or active.get(k) != v for k, v in
+                    (("device_id", device_id), ("session_id", session_id)))):
+            raise ValueError("browser result does not belong to the active claimed task/session")
+        task.update(state="completed" if result["ok"] else "failed", response=result, completed_at=time.time())
+        atomic_json(browser_directory(job_id) / "request.json", task)
+        return dict(id=job_id, state=task["state"])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -352,6 +454,21 @@ def main():
     worker_parser.add_argument("--session-id", required=True)
     sub.add_parser("worker-status")
     sub.add_parser("list")
+    for name in ("queue-browser-tabs", "queue-browser-snapshot", "queue-browser-upload"):
+        browser = sub.add_parser(name)
+        if name != "queue-browser-tabs":
+            browser.add_argument("--browser-id", required=True)
+        if name == "queue-browser-upload":
+            browser.add_argument("source")
+            browser.add_argument("--ref", required=True)
+    browser = sub.add_parser("browser-status")
+    browser.add_argument("id")
+    for name in ("browser-next", "browser-complete"):
+        browser = sub.add_parser(name)
+        browser.add_argument("--device-id", required=True)
+        browser.add_argument("--session-id", required=True)
+        if name == "browser-complete":
+            browser.add_argument("id")
     for name in ("queue-upload", "queue-push"):
         upload = sub.add_parser(name)
         upload.add_argument("source")
@@ -389,6 +506,18 @@ def main():
                 result = worker_status()
         elif args.command == "list":
             result = list_jobs()
+        elif args.command == "queue-browser-tabs":
+            result = browser_queue("list_tabs", expected=expected)
+        elif args.command == "queue-browser-snapshot":
+            result = browser_queue("snapshot", browser_id=args.browser_id, expected=expected)
+        elif args.command == "queue-browser-upload":
+            result = browser_queue("upload", browser_id=args.browser_id, ref=args.ref, source=args.source, expected=expected)
+        elif args.command == "browser-status":
+            result = browser_status(args.id)
+        elif args.command == "browser-next":
+            result = browser_next(args.device_id, args.session_id)
+        elif args.command == "browser-complete":
+            result = browser_complete(args.id, args.device_id, args.session_id, sys.stdin.read(160001))
         elif args.command == "queue-upload":
             result = queue_upload(args.source, expected=expected)
         elif args.command == "queue-push":

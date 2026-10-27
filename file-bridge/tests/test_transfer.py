@@ -284,6 +284,38 @@ class Transfers(unittest.TestCase):
                 "path": "relative.txt", "sha": "0" * 64, "staged": False}[invalid]
             self.assertFalse(self.respond(worker, job, **response)["ok"])
 
+    def test_browser_upload_waits_for_staging_and_is_claimed_once(self):
+        worker = self.connect()
+        task = self.cli("queue-browser-upload", self.source, "--browser-id", "tab-1", "--ref", "@e2")
+        identity = ["--device-id", self.device, "--session-id", self.session]
+        self.assertIsNone(self.cli("browser-next", *identity)["task"])
+        message = self.receive(worker)
+        self.respond(worker, message, staged=True, stage_path=r"C:\workspace\staging\sample.txt",
+                     size=message["size"], sha256=message["sha256"])
+        claimed = self.cli("browser-next", *identity)["task"]
+        self.assertEqual(claimed["id"], task["id"])
+        self.assertEqual(claimed["sha256"], message["sha256"])
+        self.assertIsNone(self.cli("browser-next", *identity)["task"])
+        response = subprocess.run([sys.executable, str(SCRIPT), "browser-complete", task["id"], *identity],
+            env=self.env, input=json.dumps(dict(ok=True, attachment_processed=False)),
+            capture_output=True, text=True, timeout=5)
+        self.assertEqual(response.returncode, 0, response.stderr)
+        self.assertEqual(self.cli("browser-status", task["id"])["state"], "completed")
+
+    def test_browser_tasks_refuse_old_session_and_invalid_locators(self):
+        worker = self.connect()
+        task = self.cli("queue-browser-tabs")
+        self.assertIn("active transfer", self.cli("browser-next", "--device-id", self.device,
+                      "--session-id", "0" * 32, error=True)["error"])
+        self.assertIn("file-input ref", self.cli("queue-browser-upload", self.source,
+                      "--browser-id", "tab", "--ref", "invalid", error=True)["error"])
+        self.stop(worker)
+        new_session = uuid.uuid4().hex
+        self.connect(session=new_session)
+        self.assertIsNone(self.cli("browser-next", "--device-id", self.device,
+                                  "--session-id", new_session)["task"])
+        self.assertEqual(self.cli("browser-status", task["id"])["state"], "failed")
+
     def test_list_is_bounded_and_sanitized(self):
         worker = self.connect()
         first = self.cli("queue-download", "first.txt", self.root / "first")
