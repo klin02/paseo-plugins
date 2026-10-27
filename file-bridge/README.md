@@ -26,7 +26,7 @@ Requires Paseo 0.13.x on daemon and app. Windows needs PowerShell 5.1+ and OpenS
 2. On Windows, open **File Bridge** and select the local host in the header. Set SSH host to your existing alias or `user@hostname`. The default alias is `node030`; change it if your SSH configuration differs.
 3. The default remote script is `.paseo/plugin-data/file-bridge/desktop_transfer.py`, relative to the SSH login directory. Use the full Linux helper path if its daemon has a custom PASEO_HOME.
 4. Save, then acquire local control. The coordinator shows the Windows computer name, device ID and connection session. Automatic startup is off unless enabled in the panel.
-5. To stage inside a browser agent's workspace, set **Windows 暂存父目录** on the Windows host before starting its worker. Leave it empty for system Temp. Files stay isolated under `file-bridge/<job-id>/upload/<filename>`. Stop and start the worker after changing this setting; reusing an already running worker keeps its existing directory.
+5. Set **Windows 暂存父目录** to a local Windows directory, for example `D:\PaseoFiles` if that drive is available, or leave it empty for system Temp. This path is independent of the Linux source directory. Files stay isolated under `file-bridge/<job-id>/upload/<filename>`. Stop and start the worker after changing this setting; reusing an already running worker keeps its existing directory.
 
 There is no extra npm build or Python installation on Windows. Client screens are React Native and use Paseo's theme; helpers are embedded in the server bundle and materialized on the daemon.
 
@@ -39,7 +39,7 @@ There is no extra npm build or Python installation on Windows. Client screens ar
 
 Per-file limit: 32 MiB. Targets never overwrite existing files. UNC/device paths and reparse points are not supported for Windows source files. Linux destination parent directories must exist. A staged upload/push stays until explicit confirmed cleanup; cleanup across a changed device or session is refused.
 
-For `browser_upload`, use **push** first and the resulting Windows `stage_path`. Paseo 0.13.0 resolves the agent cwd on the Desktop and requires the local file to be inside that workspace. For example, if a Linux agent cwd `/nfs/home/me/tools` resolves to `D:\nfs\home\me\tools` on Windows, configure that exact Windows directory as the staging parent. This does not transfer files by itself: the bridge must finish staging and verify SHA-256 first. The browser also needs an actual file-input reference; hidden inputs omitted from snapshots remain unsupported by the current tools. Directory staging alone does not prove a ChatGPT attachment uploaded.
+For `browser_upload`, use **push** first and the resulting Windows `stage_path`. Paseo 0.13.0 resolves the calling agent's cwd on the Desktop and checks that the file is inside that directory. It does not map a remote Linux workspace to the configured Windows staging directory. A Windows-local agent needs a local workspace containing the staged file; calls from a node030 agent still have this path-mapping limitation. Creating a Windows copy of the Linux directory tree is not part of File Bridge setup. The browser also needs an actual file-input reference; hidden inputs omitted from snapshots remain unsupported by the current tools. Directory staging alone does not prove a ChatGPT attachment uploaded.
 
 ## Exclusive control
 

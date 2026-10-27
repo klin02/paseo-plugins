@@ -98,7 +98,7 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
       {settings.status === "ready" ? <>
         {field("SSH 主机（使用已有 SSH 配置/密钥）", sshHost, setSshHost)}
         {field("远程 Python 脚本路径（绝对路径或 .paseo/…）", remoteScript, setRemoteScript)}
-        {field("Windows 暂存父目录（留空使用 Temp；直接网页上传需在 agent 工作区内）", stagingDirectory, setStagingDirectory)}
+        {field("Windows 暂存父目录（例如 D:\\PaseoFiles；留空使用 Temp）", stagingDirectory, setStagingDirectory)}
         {button(`插件启动时自动取得控制权：${autoStart ? "开" : "关"}`, () => setAutoStart(!autoStart))}
         {button("保存设置（先停止当前助手）", () => void act(async () => {
           const values = preferences.schema.parse({ sshHost, remoteScript, autoStart, stagingDirectory });
@@ -119,7 +119,7 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
         {button("接收网页下载", () => void submit("download"))}
       </View>
       <Text style={muted}>网页动作提交后，在持有控制权的 Windows Paseo 打开对应的文件选择/保存窗口。选择完成仍须检查网页附件处理完成；通用互传无需浏览器。</Text>
-      <Text style={muted}>直接调用 browser_upload 时，先发送到 Windows 暂存目录，再使用完成任务的 stage_path；暂存父目录须位于该 agent 的 Windows 工作区。不要将 node030 路径直接当作本地文件。</Text>
+      <Text style={muted}>暂存目录是 Windows 本机路径，与 node030 的目录名无关。browser_upload 还会检查调用方的工作目录；从 node030 调用时，Paseo 0.13.0 不会自动映射到这个本地目录，因此换暂存目录本身不能保证直接网页上传。</Text>
     </View>
     {selected && <View style={box}>
       <Text style={{ ...foreground, fontWeight: "bold" }}>当前任务：{selected.action} · {selected.state}</Text>

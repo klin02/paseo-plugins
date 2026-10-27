@@ -17,7 +17,7 @@ test("SSH shell arguments preserve apostrophes and reject unsafe connection sett
   assert.throws(() => preferences.schema.parse({sshHost:"-Fbad@node030"}));
   assert.throws(() => preferences.schema.parse({remoteScript:"/tmp/../other.py"}));
   assert.equal(preferences.schema.parse({}).stagingDirectory, "");
-  assert.equal(preferences.schema.parse({stagingDirectory:"D:\\nfs\\home\\youkunlin\\tools"}).stagingDirectory, "D:\\nfs\\home\\youkunlin\\tools");
+  assert.equal(preferences.schema.parse({stagingDirectory:"D:\\PaseoFiles"}).stagingDirectory, "D:\\PaseoFiles");
   for (const stagingDirectory of ["relative", "D:relative", "\\\\server\\share", "D:\\temp\nother", "D:\\temp\\..\\other"]) {
     assert.throws(() => preferences.schema.parse({stagingDirectory}));
   }
