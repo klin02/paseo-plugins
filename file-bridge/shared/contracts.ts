@@ -25,6 +25,8 @@ export const ownerSchema = z.object({
 export const statusSchema = z.object({
   platform: z.string(), deviceName: z.string(), deviceId: z.string(),
   state: z.enum(["stopped", "connecting", "connected", "error"]),
+  ownership: z.enum(["none", "managed", "same-device"]).default("none"),
+  notice: z.string().nullable().default(null),
   error: z.string().nullable(), coordinator: ownerSchema.nullable(),
   jobs: z.array(jobSchema),
 });

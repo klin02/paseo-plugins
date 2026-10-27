@@ -83,11 +83,12 @@ export function BridgeScreen({ theme, layout }: PluginScreenProps) {
       <Text style={foreground}>当前独占电脑：{owner?.worker_connected ? owner.device_name : "无在线控制者"}</Text>
       {owner?.worker_connected && <Text style={muted} selectable>会话：{owner.session_id}</Text>}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {button("取得本机控制权", () => void act(() => control({ action: "start" })), busy || status?.platform !== "win32")}
-        {button("停止本机并释放", () => void act(() => control({ action: "stop" })), busy || status?.platform !== "win32")}
+        {button("取得本机控制权", () => void act(() => control({ action: "start" })), busy || status?.platform !== "win32" || status.state === "connecting" || status.state === "connected")}
+        {button("停止本机并释放", () => void act(() => control({ action: "stop" })), busy || status?.platform !== "win32" || status.ownership === "same-device")}
         {button("刷新", () => void act(async () => { if (selectedId.current) setSelected(await inspect({id:selectedId.current})); }))}
       </View>
       <Text style={muted}>另一台必须等待当前助手停止或 SSH 断开。此锁只约束 File Bridge 文件助手；Paseo 原生浏览器工具和其他 Desktop 连接有自己的路由。</Text>
+      {status?.notice && <Text style={foreground} selectable>{status.notice}</Text>}
     </View>
     {(error || status?.error) && <Text accessibilityRole="alert" style={foreground} selectable>{error || status?.error}</Text>}
     <View style={box}>

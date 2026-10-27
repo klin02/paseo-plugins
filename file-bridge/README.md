@@ -44,6 +44,8 @@ One coordinator accepts exactly one worker SSH session using an OS file lock. Jo
 
 The plugin watches its parent process pipe so an unexpected backend exit also terminates its worker and SSH child. Normal Stop kills the process tree. A broken network may delay server-side disconnect detection; the second worker remains blocked during that period. Never delete the live lock file.
 
+Repeated acquisition first checks the coordinator. If this device already has an active session, the panel reuses that session and fences new jobs to its current identity. It distinguishes a worker managed by this plugin process from a same-device worker started by another instance; the latter remains usable, but must be stopped through the daemon that started it. The panel disables duplicate acquisition while connected and does not pretend to own another process's Stop action.
+
 This controls **File Bridge workers**. It does not disconnect other Paseo Desktop sessions or intercept native `browser_*` tools. Connected hosts can manage Windows workspaces, agents and terminals, but the public plugin API does not expose cross-host filesystem transfer or plugin RPC. File bytes use the separate SSH channel.
 
 State: `~/.local/state/paseo-file-bridge/transfers`; `PASEO_FILE_BRIDGE_STATE` may override it only if all coordinator commands and workers use the same value. Temp: system Temp `/file-bridge/<job-id>/...`. Stop old experimental AskGPT workers before migrating; their queue format and state are separate. The installed ask-gpt skill's legacy file helper does not target this queue; use this panel or the following CLI.
@@ -74,6 +76,8 @@ node scripts/verify-live.mjs
 
 Verified: TypeScript compilation; actual Python subprocess tests for exclusivity, owner fencing, disconnect, hashes, no overwrite and cleanup; Node service ↔ Python push/pull integration; PowerShell parse/helper/parent-EOF tests; live node030 plugin load, client registrations and RPC error states. Linux tests also run on the shared workspace filesystem.
 
-Pending native Windows acceptance: local Git install, real SSH start/stop, two Windows machines taking turns, file round-trip and actual Paseo Open/Save dialogs. Browser file dialogs are experimental until those checks pass.
+Native Windows evidence: one real Windows desktop completed UTF-8 filename/content and empty-file round trips through SSH, matching SHA-256, rejection of existing destinations, acknowledged Temp cleanup, rejection of a second controller and rejection of a wrong-owner request. The same active session passed a second round-trip while diagnosing duplicate acquisition.
+
+Pending native Windows acceptance: the 0.1.1 same-device display/reuse update on the desktop, two physical Windows machines taking turns, and actual Paseo Open/Save dialogs. Browser file dialogs remain experimental.
 
 References: https://paseo.sh/docs/plugins/reference.md, https://paseo.sh/docs/sdk/reference.md#clienthosts, https://paseo.sh/docs/browser.md.

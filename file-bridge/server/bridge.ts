@@ -8,12 +8,24 @@ import { promisify } from "node:util";
 import { pythonSource, powershellSource } from "./assets.ts";
 import { jobSchema, ownerSchema, type Preferences, queueTransfer } from "../shared/contracts.ts";
 import type { RpcInput } from "@getpaseo/plugin";
+import type { z } from "zod";
 
 const runFile = promisify(execFile);
 export const quoteUnix = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 const sshOptions = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"];
 type QueueInput = RpcInput<typeof queueTransfer>;
 type SettingsReader = () => Promise<Preferences>;
+type Owner = z.output<typeof ownerSchema>;
+type State = "stopped" | "connecting" | "connected" | "error";
+
+export function reconcileOwner(platform: string, deviceId: string, sessionId: string, hasChild: boolean, state: State, owner: Owner | null): { state: State; ownership: "none" | "managed" | "same-device" } {
+  if (platform !== "win32" || !owner) return { state, ownership: "none" };
+  if (owner.worker_connected && owner.device_id === deviceId) {
+    return { state: "connected", ownership: hasChild && owner.session_id === sessionId ? "managed" : "same-device" };
+  }
+  if (hasChild && !owner.worker_connected) return { state: "connecting", ownership: "managed" };
+  return { state, ownership: "none" };
+}
 
 export class Bridge {
   private child: ChildProcess | null = null;
@@ -64,8 +76,11 @@ export class Bridge {
       coordinator = ownerSchema.parse(values[0]);
       jobs = jobSchema.array().parse(values[1].jobs);
     } catch (error) { queryError = this.message(error); }
+    const current = reconcileOwner(process.platform, this.deviceId, this.sessionId, !!this.child, this.state, coordinator);
+    const notice = current.ownership === "same-device"
+      ? "本机已有另一插件实例的助手在线，已复用其连接。停止/释放须在启动它的本地 daemon 中操作；请勿重复启动。" : null;
     return { platform: process.platform, deviceName: this.deviceName, deviceId: this.deviceId,
-      state: this.state, error: queryError || this.error, coordinator, jobs };
+      ...current, notice, error: queryError || (current.state === "connected" ? null : this.error), coordinator, jobs };
   }
 
   async start() {
@@ -75,6 +90,12 @@ export class Bridge {
     if (this.child) return;
     this.changing = true;
     try {
+      const owner = ownerSchema.parse(await this.command(["worker-status"]));
+      if (owner.worker_connected) {
+        if (owner.device_id !== this.deviceId) throw new Error(`控制权由 ${owner.device_name || "另一台电脑"} 持有，请先在该电脑释放。`);
+        this.error = null;
+        return;
+      }
       const config = await this.readSettings();
       this.sessionId = randomUUID().replaceAll("-", "");
       this.state = "connecting"; this.error = null;
@@ -131,8 +152,9 @@ export class Bridge {
       args = ["queue-cleanup-upload", needed("id"), "--confirm"];
     }
     if (process.platform === "win32") {
-      if (this.state !== "connected" || !this.child) throw new Error("本机未取得控制权。");
-      args.push("--expected-device", this.deviceId, "--expected-session", this.sessionId);
+      const owner = ownerSchema.parse(await this.command(["worker-status"]));
+      if (!owner.worker_connected || owner.device_id !== this.deviceId || !owner.session_id) throw new Error("本机未取得控制权。");
+      args.push("--expected-device", this.deviceId, "--expected-session", owner.session_id);
     }
     try { return jobSchema.parse(await this.command(args)); }
     catch (error) { throw new Error(this.message(error)); }
