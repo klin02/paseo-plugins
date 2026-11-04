@@ -30,6 +30,8 @@ export type CompletionEvent = z.infer<typeof completionEventSchema>;
 export const monitorHeartbeatSchema = z.object({
   clientId: z.string().min(1).max(200), browserCount: z.number().int().min(0).max(10000),
   supported: z.boolean(), error: z.string().max(500).nullable(),
+  sample: z.object({ at: z.number(), hasPrompt: z.boolean(), hasAnswer: z.boolean(),
+    generating: z.boolean(), submissions: z.number(), cancellations: z.number() }).nullable().optional(),
 });
 export type MonitorHeartbeat = z.infer<typeof monitorHeartbeatSchema>;
 const monitorStatusSchema = z.object({

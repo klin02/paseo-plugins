@@ -1,6 +1,6 @@
 {
   "name": "@klin02/paseo-web-gpt-notifier",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Notify ntfy when a ChatGPT reply completes in the Paseo desktop browser.",

@@ -46,5 +46,6 @@ try {
     delivered: current.delivered, activeDesktopMonitors: current.monitors.filter(item => item.supported).length,
     monitoredChatGptTabs: current.monitors.filter(item => item.supported).reduce((sum, item) => sum + item.browserCount, 0),
     monitorErrors: current.monitors.filter(item => item.error).map(item => item.error),
+    pageSamples: current.monitors.filter(item => item.supported).map(item => item.sample ?? null),
     invalidInputRejected: true, desktopRendering: 'not exercised by this CLI check' }, null, 2));
 } finally { await client.close(); }

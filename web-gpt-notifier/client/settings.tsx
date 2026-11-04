@@ -55,6 +55,7 @@ export function SettingsScreen({ theme, layout }: PluginSurfaceProps) {
         <View style={{ gap: 8, padding: 12 }}>
           <Text style={textStyle}>{status?.configured ? '通知目标已配置' : '请先保存通知目标'}</Text>
           <Text style={textStyle}>{active.length ? `桌面监控在线，检测到 ${browserCount} 个 ChatGPT 标签页` : '等待 Paseo 桌面端连接'}</Text>
+          <Text style={textStyle}>{active.some(value => value.sample && Date.now() - value.sample.at < 30000) ? '网页检测正常更新' : '等待网页检测结果'}</Text>
           <Text style={textStyle}>已投递：{status?.delivered ?? 0}</Text>
           {status?.lastError ? <Text style={textStyle}>{status.lastError}</Text> : null}
           {active.some(value => value.error) ? <Text style={textStyle}>网页读取或投递正在重试。</Text> : null}

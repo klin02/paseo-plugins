@@ -16,7 +16,7 @@ Open ChatGPT in Paseo's built-in browser. Monitoring starts automatically while 
 
 ## Detection and delivery
 
-The client reads only `https://chatgpt.com` webviews in its own Desktop window, including resident inactive panes. A first completed page establishes a baseline. A captured submission followed by a changed message, or observed generation, arms the monitor; it waits for generation to stop and the latest answer to remain unchanged for 1.8 seconds. Manual stop clicks and visible generation errors suppress success. Navigation resets the baseline, except when a new chat acquires its conversation URL.
+The client supports both current `data-conversation-role` message containers and older message/turn attributes. The client reads only `https://chatgpt.com` webviews in its own Desktop window, including resident inactive panes. A first completed page establishes a baseline. A captured submission followed by a changed message, or observed generation, arms the monitor; it waits for generation to stop and the latest answer to remain unchanged for 1.8 seconds. Manual stop clicks and visible generation errors suppress success. Navigation resets the baseline, except when a new chat acquires its conversation URL.
 
 The browser returns message identifiers and hashes, not prompt or reply text. The daemon receives a completion ID, conversation title and URL, then publishes a fixed notice with a link to that conversation. It retries transient errors and stores the newest 1,000 delivered IDs under `$PASEO_HOME/plugin-data/web-gpt-notifier/` (default `~/.paseo/plugin-data/web-gpt-notifier/`). Topic and token are not stored in the delivery file. Ambiguous HTTP failures may result in duplicate notices.
 

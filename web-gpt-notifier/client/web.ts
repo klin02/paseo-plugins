@@ -1,5 +1,5 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
-import { getStatus, heartbeat, notifyCompletion } from '../shared/contracts.ts';
+import { getStatus, heartbeat, notifyCompletion, type MonitorHeartbeat } from '../shared/contracts.ts';
 import { isChatGptUrl, ReplyTracker, type PageSnapshot } from './tracker.ts';
 
 // Runs in the guest page; reply text is hashed there and never sent to the daemon.
@@ -10,13 +10,13 @@ export const snapshotScript = String.raw`(async () => {
     const state = { documentId: crypto.randomUUID(), cancellations: 0, submissions: 0 };
     state.stopHandler = event => {
       if (event.target?.closest?.('[data-testid="stop-button"], [data-testid="fruitjuice-stop-button"], button[aria-label="Stop generating"], button[aria-label="停止生成"]')) state.cancellations++;
-      if (event.target?.closest?.('[data-testid="send-button"], [data-testid="regenerate-response-button"], button[aria-label="Send prompt"], button[aria-label="Regenerate"], button[aria-label="重新生成"]')) state.submissions++;
+      if (event.target?.closest?.('[data-testid="send-button"], button[aria-label="发送"], button[aria-label="发送提示"], [data-testid="regenerate-response-button"], button[aria-label="Send prompt"], button[aria-label="Regenerate"], button[aria-label="重新生成"]')) state.submissions++;
     };
     state.submitHandler = event => {
-      if (event.target?.querySelector?.('#prompt-textarea')) state.submissions++;
+      if (event.target?.querySelector?.('#prompt-textarea, [contenteditable="true"], textarea')) state.submissions++;
     };
     state.keyHandler = event => {
-      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.target?.closest?.('#prompt-textarea')) state.submissions++;
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && (event.target?.isContentEditable || event.target?.closest?.('#prompt-textarea, textarea, [role="textbox"]'))) state.submissions++;
     };
     document.addEventListener('click', state.stopHandler, true);
     document.addEventListener('submit', state.submitHandler, true);
@@ -27,12 +27,17 @@ export const snapshotScript = String.raw`(async () => {
   const hash = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
     .map(x => x.toString(16).padStart(2, '0')).join('');
   const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
-  const messages = Array.from(document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'));
+  const turns = Array.from(document.querySelectorAll('[data-turn="user"], [data-turn="assistant"]'));
+  const labeled = Array.from(document.querySelectorAll('[data-conversation-role="user"], [data-conversation-role="assistant"]'));
+  const messages = labeled.length ? labeled.map(element => element.parentElement) : turns.length ? turns : Array.from(document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]'));
+  const role = element => element.getAttribute('data-turn') || element.getAttribute('data-message-author-role')
+    || element.querySelector('[data-conversation-role]')?.getAttribute('data-conversation-role');
   let userIndex = -1;
-  for (let i = 0; i < messages.length; i++) if (messages[i].getAttribute('data-message-author-role') === 'user') userIndex = i;
+  for (let i = 0; i < messages.length; i++) if (role(messages[i]) === 'user') userIndex = i;
   const user = messages[userIndex];
-  const answer = messages.slice(userIndex + 1).filter(element => element.getAttribute('data-message-author-role') === 'assistant').at(-1);
-  const messageId = element => element?.getAttribute('data-message-id') || element?.closest('[data-message-id]')?.getAttribute('data-message-id') || '';
+  const answer = messages.slice(userIndex + 1).filter(element => role(element) === 'assistant').at(-1);
+  const messageId = element => element?.getAttribute('data-turn-id') || element?.getAttribute('data-message-id') || element?.closest('[data-message-id]')?.getAttribute('data-message-id')
+    || element?.querySelector('[data-chatgpt-search-message-ids]')?.getAttribute('data-chatgpt-search-message-ids') || '';
   const promptKey = user ? (messageId(user) || await hash(user.textContent || '')) : '';
   const text = answer?.querySelector('.markdown, .prose')?.textContent || answer?.textContent || '';
   const answerKey = answer && text.trim() ? (messageId(answer) || 'answer-' + messages.indexOf(answer)) : '';
@@ -69,6 +74,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean)
   let busy = false;
   let lastHeartbeat = 0;
   let browserError: string | null = null;
+  let sample: MonitorHeartbeat['sample'] = null;
   const clientId = `desktop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const tick = async () => {
     if (stopped || busy) return;
@@ -93,7 +99,10 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean)
             pending.add(id);
             // A frozen guest only stalls its own read, never the other tabs.
             void view.executeJavaScript(snapshotScript).then(async page => {
-              if (stopped || !page || !isChatGptUrl(page.url)) return;
+              if (stopped) return;
+              if (!page || !isChatGptUrl(page.url)) { browserError = '网页尚未返回有效检测结果。'; return; }
+              sample = { at: Date.now(), hasPrompt: Boolean(page.promptKey), hasAnswer: Boolean(page.answerKey),
+                generating: page.generating, submissions: page.submissions, cancellations: page.cancellations };
               const current = new URL(view.getURL());
               if (current.origin + current.pathname !== page.url) return;
               browserError = null;
@@ -115,7 +124,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean)
         trackers.clear();
       }
       if (!stopped && Date.now() - lastHeartbeat >= 15000) {
-        await client.rpc(heartbeat, { clientId, browserCount, supported, error: browserError });
+        await client.rpc(heartbeat, { clientId, browserCount, supported, error: browserError, sample });
         lastHeartbeat = Date.now();
       }
     } catch {
