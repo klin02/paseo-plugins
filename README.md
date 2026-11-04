@@ -4,6 +4,7 @@ Personal Paseo plugins, organized as one package directory per plugin. Each plug
 
 | Plugin | Purpose | Git install source |
 | --- | --- | --- |
+| [Web GPT Notifier](./web-gpt-notifier) | ChatGPT reply completion notices through ntfy | `github:klin02/paseo-plugins:web-gpt-notifier` |
 | [File Bridge](./file-bridge) | Windows ↔ SSH server files, one active desktop worker | `github:klin02/paseo-plugins:file-bridge` |
 
 ## Install
