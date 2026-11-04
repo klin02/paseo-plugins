@@ -26,7 +26,7 @@ try {
     '@getpaseo/plugin/client/ui': {}, react: require('react'), 'react/jsx-runtime': require('react/jsx-runtime'),
     'react-native': { Platform: { OS: 'ios' } }, zod: require('zod'),
   };
-  const factory = vm.runInNewContext(own.clientBundle, { setTimeout, clearTimeout, setInterval, clearInterval, URL }, { timeout: 3000 });
+  const factory = vm.runInNewContext(own.clientBundle, { setTimeout, clearTimeout, setInterval, clearInterval, URL, AbortController }, { timeout: 3000 });
   const plugin = factory(name => { assert.ok(name in runtime, 'Unexpected runtime import ' + name); return runtime[name]; });
   const registrations = [];
   const stop = plugin.default({

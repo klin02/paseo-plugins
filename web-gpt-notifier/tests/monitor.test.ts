@@ -213,6 +213,7 @@ test('browser focus selects the existing tab and rejects a closed native guest',
   let selected = false; let live = true;
   try {
     globals.document = { querySelector: (selector: string) => {
+      if (selector.startsWith('[data-paseo-browser-surface')) return null;
       assert.equal(selector, '[data-testid="workspace-tab-browser_original"]');
       return { click: () => { selected = true; } };
     } };
@@ -221,6 +222,37 @@ test('browser focus selects the existing tab and rejects a closed native guest',
     live = false;
     await assert.rejects(focusBrowser('original'), /标签页已关闭/);
     await assert.rejects(focusBrowser('invalid"selector'), /无效标签页/);
+  } finally {
+    if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
+    if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
+  }
+});
+
+test('plugin cleanup cancels an outstanding original-tab selection', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalDocument = globals.document; const originalDesktop = globals.paseoDesktop;
+  try {
+    globals.document = { querySelector: () => null };
+    globals.paseoDesktop = { browser: { focus: () => { throw new Error('must not focus after cleanup'); } } };
+    const controller = new AbortController();
+    const result = focusBrowser('original', controller.signal);
+    controller.abort();
+    await assert.rejects(result, { name: 'AbortError' });
+  } finally {
+    if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
+    if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
+  }
+});
+
+test('a visible original browser can be focused when the layout hides its tab strip', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalDocument = globals.document; const originalDesktop = globals.paseoDesktop;
+  let focused = false;
+  try {
+    globals.document = { querySelector: (selector: string) => selector.startsWith('[data-paseo-browser-surface')
+      ? { getBoundingClientRect: () => ({ x: 10, y: 10, width: 1000, height: 700 }) } : null };
+    globals.paseoDesktop = { browser: { focus: async () => { focused = true; return true; } } };
+    await focusBrowser('original'); assert.ok(focused);
   } finally {
     if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
     if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;

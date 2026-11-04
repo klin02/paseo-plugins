@@ -63,7 +63,10 @@ interface BrowserView {
 interface DesktopGlobals {
   document?: {
     querySelectorAll(selector: string): Iterable<BrowserView>;
-    querySelector?(selector: string): { click(): void } | null;
+    querySelector?(selector: string): {
+      click(): void;
+      getBoundingClientRect?(): { x: number; y: number; width: number; height: number };
+    } | null;
   };
   paseoDesktop?: {
     platform?: string;
@@ -78,19 +81,31 @@ interface DesktopGlobals {
   };
 }
 const desktopGlobals = () => globalThis as unknown as DesktopGlobals;
-export async function focusBrowser(browserId: string): Promise<void> {
+export async function focusBrowser(browserId: string, signal?: AbortSignal): Promise<void> {
   const browser = desktopGlobals().paseoDesktop?.browser;
   if (!browser) throw new Error('请在 Paseo 桌面端打开此标签页。');
   if (!/^[A-Za-z0-9_-]+$/.test(browserId)) throw new Error('无效标签页。');
   // shortcut: the Desktop tab selector is internal to Paseo 0.14/0.15.
   for (let attempt = 0; attempt < 40; attempt++) {
+    signal?.throwIfAborted();
     const tab = desktopGlobals().document?.querySelector?.(`[data-testid="workspace-tab-browser_${browserId}"]`);
-    if (tab) {
-      tab.click();
+    const viewRect = desktopGlobals().document?.querySelector?.(`[data-paseo-browser-surface="${browserId}"][aria-hidden="false"]`)?.getBoundingClientRect?.();
+    const alreadyVisible = viewRect && viewRect.width > 1 && viewRect.height > 1 && viewRect.x >= 0 && viewRect.y >= 0;
+    if (tab || alreadyVisible) {
+      tab?.click();
       if (!await browser.focus(browserId)) throw new Error('标签页已关闭。');
       return;
     }
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, 50);
+      const abort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        reject(signal?.reason ?? new Error('Plugin stopped'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
   throw new Error('无法选择原标签页，请在工作区中打开。');
 }

@@ -13,8 +13,9 @@ export default function contribute(client: PluginClientContext) {
     id: 'settings', title: 'Web GPT Notifier 设置', icon: 'BellRing', context: 'global',
     onSelect: () => client.openSettings('notifications'),
   });
+  const navigation = new AbortController();
   const store = new TaskStore();
-  const removeActivity = registerActivityUi(client, store, focusBrowser);
+  const removeActivity = registerActivityUi(client, store, id => focusBrowser(id, navigation.signal));
   const stop = startBrowserMonitor(client, Platform.OS === 'web', store);
-  return () => { stop(); removeActivity(); removeCommand(); removeSettings(); };
+  return () => { navigation.abort(); stop(); removeActivity(); removeCommand(); removeSettings(); };
 }
