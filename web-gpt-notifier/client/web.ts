@@ -79,7 +79,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean)
       if (stopped) return;
       if (supported && status.configured && status.enabled) {
         const seen = new Set<string>();
-        // shortcut: Paseo 0.14 resident webviews are internal; recheck on an SDK upgrade.
+        // shortcut: Paseo 0.14/0.15 resident webviews are internal; recheck on an SDK upgrade.
         const views = host.document!.querySelectorAll('webview[data-paseo-browser-id]');
         for (const view of views) {
           const id = view.getAttribute('data-paseo-browser-id');

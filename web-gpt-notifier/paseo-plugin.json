@@ -3,6 +3,6 @@
   "name": "Web GPT Notifier",
   "description": "监控 Paseo 内置浏览器中的 ChatGPT 回复完成，并发送 ntfy 通知。",
   "requirements": {
-    "paseo": ">=0.14.0 <0.15.0"
+    "paseo": ">=0.14.0 <0.16.0"
   }
 }

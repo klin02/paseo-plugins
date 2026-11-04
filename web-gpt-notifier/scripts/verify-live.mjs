@@ -13,7 +13,7 @@ const id = process.argv[2] || 'web-gpt-notifier';
 const home = process.env.PASEO_HOME || join(homedir(), '.paseo');
 const status = JSON.parse(execFileSync('paseo', ['daemon', 'status', '--json'], { encoding: 'utf8' }));
 const client = createHostClient(status.listen, {
-  clientId: 'web-gpt-notifier-verification', clientType: 'cli', appVersion: '0.14.0',
+  clientId: 'web-gpt-notifier-verification', clientType: 'cli', appVersion: status.daemonVersion,
   localCredential: async () => (await readFile(join(home, 'local-credential'), 'utf8')).trim(),
   reconnect: { enabled: false },
 });
@@ -42,7 +42,9 @@ try {
   assert.equal(typeof current.configured, 'boolean');
   assert.ok(Array.isArray(current.monitors));
   await assert.rejects(() => client.invokePluginRpc(id, 'completion.notify', { id: 'invalid', url: 'https://other.example', title: 'invalid' }));
-  console.log(JSON.stringify({ plugin: id, bundleLoaded: true, registrations, configured: current.configured,
+  console.log(JSON.stringify({ plugin: id, daemonVersion: status.daemonVersion, bundleLoaded: true, registrations, configured: current.configured,
     delivered: current.delivered, activeDesktopMonitors: current.monitors.filter(item => item.supported).length,
+    monitoredChatGptTabs: current.monitors.filter(item => item.supported).reduce((sum, item) => sum + item.browserCount, 0),
+    monitorErrors: current.monitors.filter(item => item.error).map(item => item.error),
     invalidInputRejected: true, desktopRendering: 'not exercised by this CLI check' }, null, 2));
 } finally { await client.close(); }
