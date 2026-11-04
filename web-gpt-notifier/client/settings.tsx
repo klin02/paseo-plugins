@@ -42,8 +42,8 @@ export function SettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const textStyle = { color: theme.colors.foregroundMuted, fontSize: 13 };
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: layout.compact ? 16 : 24, gap: 16 }}>
-      <Text style={{ color: theme.colors.foreground, fontSize: 16 }}>在 Paseo 桌面端打开 ChatGPT，插件会自动监控当前窗口中已打开的网页。仅发送完成提醒、会话标题和链接，不发送回答正文。</Text>
-      <SettingsSection title="ntfy 通知">
+      <Text style={{ color: theme.colors.foreground, fontSize: 16 }}>在 Paseo 桌面端打开 ChatGPT，插件会显示侧栏会话状态和工作区页眉指示，并在任务开始／完成时发送本机系统通知。ntfy 可选，仅发送完成提醒、会话标题和链接。</Text>
+      <SettingsSection title="监控与 ntfy 通知">
         <SettingsSwitch label="启用监控" value={draft.enabled} onValueChange={enabled => setDraft(value => ({ ...value, enabled }))} />
         <SettingsInput key={'server-' + (settings.status === 'ready' ? settings.revision : '')} label="服务器" initialValue={draft.serverUrl} onChangeText={serverUrl => setDraft(value => ({ ...value, serverUrl }))} />
         <SettingsInput key={'topic-' + (settings.status === 'ready' ? settings.revision : '')} label="Topic" hint="仅保存在当前主机设置中。" initialValue={draft.topic} secureTextEntry onChangeText={topic => setDraft(value => ({ ...value, topic }))} />
@@ -53,7 +53,7 @@ export function SettingsScreen({ theme, layout }: PluginSurfaceProps) {
       </SettingsSection>
       <SettingsSection title="监控状态">
         <View style={{ gap: 8, padding: 12 }}>
-          <Text style={textStyle}>{status?.configured ? '通知目标已配置' : '请先保存通知目标'}</Text>
+          <Text style={textStyle}>{status?.configured ? '通知目标已配置' : 'ntfy 未配置；本机系统通知和任务状态仍可使用'}</Text>
           <Text style={textStyle}>{active.length ? `桌面监控在线，检测到 ${browserCount} 个 ChatGPT 标签页` : '等待 Paseo 桌面端连接'}</Text>
           <Text style={textStyle}>{active.some(value => value.sample && Date.now() - value.sample.at < 30000) ? '网页检测正常更新' : '等待网页检测结果'}</Text>
           <Text style={textStyle}>已投递：{status?.delivered ?? 0}</Text>

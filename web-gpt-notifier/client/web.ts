@@ -1,6 +1,7 @@
 import type { PluginClientContext } from '@getpaseo/plugin/client';
-import { getStatus, heartbeat, notifyCompletion, type MonitorHeartbeat } from '../shared/contracts.ts';
+import { getStatus, heartbeat, notifyCompletion, type MonitorHeartbeat, type CompletionEvent } from '../shared/contracts.ts';
 import { isChatGptUrl, ReplyTracker, type PageSnapshot } from './tracker.ts';
+import { TaskStore } from './tasks.ts';
 
 // Runs in the guest page; reply text is hashed there and never sent to the daemon.
 export const snapshotScript = String.raw`(async () => {
@@ -60,22 +61,112 @@ interface BrowserView {
   executeJavaScript(script: string): Promise<PageSnapshot | null>;
 }
 interface DesktopGlobals {
-  document?: { querySelectorAll(selector: string): Iterable<BrowserView> };
-  paseoDesktop?: { platform?: string };
+  document?: {
+    querySelectorAll(selector: string): Iterable<BrowserView>;
+    querySelector?(selector: string): { click(): void } | null;
+  };
+  paseoDesktop?: {
+    platform?: string;
+    notification?: { sendNotification(input: { title: string; body: string; data: Record<string, unknown> }): Promise<boolean> };
+    events?: { on(event: string, handler: (payload: unknown) => void): Promise<() => void> };
+    browser?: {
+      focus(browserId: string): Promise<boolean>;
+      executeAutomationCommand(request: Record<string, unknown>): Promise<{
+        ok: boolean; result?: { tabs?: { browserId: string; workspaceId: string | null }[] };
+      }>;
+    };
+  };
 }
-
-export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean): () => void {
-  const host = globalThis as unknown as DesktopGlobals;
+const desktopGlobals = () => globalThis as unknown as DesktopGlobals;
+export async function focusBrowser(browserId: string): Promise<void> {
+  const browser = desktopGlobals().paseoDesktop?.browser;
+  if (!browser) throw new Error('请在 Paseo 桌面端打开此标签页。');
+  if (!/^[A-Za-z0-9_-]+$/.test(browserId)) throw new Error('无效标签页。');
+  // shortcut: the Desktop tab selector is internal to Paseo 0.14/0.15.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const tab = desktopGlobals().document?.querySelector?.(`[data-testid="workspace-tab-browser_${browserId}"]`);
+    if (tab) {
+      tab.click();
+      if (!await browser.focus(browserId)) throw new Error('标签页已关闭。');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('无法选择原标签页，请在工作区中打开。');
+}
+interface TrackedTab {
+  view: BrowserView;
+  tracker: ReplyTracker;
+  reading: boolean;
+  startedTurn: number;
+  completedTurn: number;
+}
+export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean, store = new TaskStore()): () => void {
+  const host = desktopGlobals();
   const supported = isWeb && Boolean(host.paseoDesktop && host.document);
-  const trackers = new Map<string, ReplyTracker>();
-  const pending = new Set<string>();
+  const tabs = new Map<string, TrackedTab>();
   const observedViews = new Set<BrowserView>();
+  const completions = new Map<string, CompletionEvent>();
+  const delivering = new Set<string>();
+  const workspaces = new Map<string, string | null>();
   let stopped = false;
   let busy = false;
+  let mapping = false;
+  let lastMapping = -Infinity;
   let lastHeartbeat = 0;
   let browserError: string | null = null;
   let sample: MonitorHeartbeat['sample'] = null;
+  let removeClick = () => {};
+  store.setMonitor({ supported });
   const clientId = `desktop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  // shortcut: these native Desktop bridges are internal to Paseo 0.14/0.15.
+  if (supported && host.paseoDesktop?.events) {
+    void host.paseoDesktop.events.on('notification-click', payload => {
+      const data = (payload as { data?: Record<string, unknown> } | null)?.data;
+      if (data?.webGptClient !== clientId || typeof data.browserId !== 'string' || !tabs.has(data.browserId)) return;
+      client.openScreen({ screenId: 'activity', params: { focus: data.browserId } });
+    }).then(remove => { if (stopped) remove(); else removeClick = remove; })
+      .catch(() => store.setMonitor({ error: '无法注册通知点击处理，请从 Web GPT 侧栏返回会话。' }));
+  }
+  const notifyLocal = (id: string, title: string, finished: boolean) => {
+    const notification = host.paseoDesktop?.notification;
+    if (!notification) { store.setMonitor({ error: '当前桌面端未提供系统通知接口。' }); return; }
+    void notification.sendNotification({
+      title: `ChatGPT ${finished ? '回复完成' : '任务开始'} · ${title.slice(0, 200)}`,
+      body: finished ? '回复已完成，点击返回会话。' : '正在生成回复，点击返回会话。',
+      data: { webGptClient: clientId, browserId: id },
+    }).then(sent => {
+      if (!stopped && !sent) store.setMonitor({ error: '系统通知未发送，请检查操作系统的 Paseo 通知设置。' });
+    }).catch(() => { if (!stopped) store.setMonitor({ error: '系统通知发送失败，请检查桌面端通知设置。' }); });
+  };
+  const refreshWorkspaces = () => {
+    const browser = host.paseoDesktop?.browser;
+    if (!browser || mapping || Date.now() - lastMapping < 5000) return;
+    mapping = true;
+    void browser.executeAutomationCommand({ type: 'browser.automation.execute.request',
+      requestId: `web-gpt-${clientId}-${Date.now()}`, command: { command: 'list_tabs', args: {} },
+    }).then(result => {
+      if (stopped) return;
+      if (!result.ok || !Array.isArray(result.result?.tabs)) throw new Error('browser mapping unavailable');
+      workspaces.clear();
+      for (const tab of result.result.tabs) workspaces.set(tab.browserId, tab.workspaceId);
+      for (const task of store.getSnapshot().tasks) store.upsert({ ...task, workspaceId: workspaces.get(task.browserId) ?? null });
+      lastMapping = Date.now();
+      if (store.getSnapshot().error === '无法读取标签页所属工作区，页眉指示正在重试。') store.setMonitor({ error: null });
+    }).catch(() => {
+      if (!stopped) store.setMonitor({ error: '无法读取标签页所属工作区，页眉指示正在重试。' });
+    }).finally(() => { mapping = false; });
+  };
+  const sendQueued = () => {
+    for (const event of completions.values()) {
+      if (delivering.has(event.id)) continue;
+      delivering.add(event.id);
+      void client.rpc(notifyCompletion, event).then(result => {
+        if (!stopped && result.status !== 'disabled') completions.delete(event.id);
+      }).catch(() => { browserError = 'ntfy 投递失败，插件会自动重试。'; })
+        .finally(() => { delivering.delete(event.id); });
+    }
+  };
   const tick = async () => {
     if (stopped || busy) return;
     busy = true;
@@ -83,62 +174,74 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean)
     try {
       const status = await client.rpc(getStatus, {});
       if (stopped) return;
-      if (supported && status.configured && status.enabled) {
+      store.setMonitor({ enabled: status.enabled });
+      if (status.enabled && status.configured) sendQueued();
+      if (supported && status.enabled) {
+        refreshWorkspaces();
         const seen = new Set<string>();
-        // shortcut: Paseo 0.14/0.15 resident webviews are internal; recheck on an SDK upgrade.
         const views = host.document!.querySelectorAll('webview[data-paseo-browser-id]');
         for (const view of views) {
           const id = view.getAttribute('data-paseo-browser-id');
           if (!id) continue;
           try {
             if (!isChatGptUrl(view.getURL())) continue;
-            seen.add(id);
-            browserCount++;
-            observedViews.add(view);
-            if (pending.has(id)) continue;
-            pending.add(id);
-            // A frozen guest only stalls its own read, never the other tabs.
-            void view.executeJavaScript(snapshotScript).then(async page => {
-              if (stopped) return;
-              if (!page || !isChatGptUrl(page.url)) { browserError = '网页尚未返回有效检测结果。'; return; }
+            seen.add(id); browserCount++; observedViews.add(view);
+            let tab = tabs.get(id);
+            if (!tab || tab.view !== view) {
+              tab = { view, tracker: new ReplyTracker(), reading: false, startedTurn: 0, completedTurn: 0 };
+              tabs.set(id, tab);
+            }
+            if (tab.reading) continue;
+            const tracked = tab;
+            tracked.reading = true;
+            // A frozen guest only stalls its own read, never other tabs or ntfy retries.
+            void view.executeJavaScript(snapshotScript).then(page => {
+              if (stopped || tabs.get(id) !== tracked) return;
+              if (!page || !isChatGptUrl(page.url)) throw new Error('invalid snapshot');
               sample = { at: Date.now(), hasPrompt: Boolean(page.promptKey), hasAnswer: Boolean(page.answerKey),
                 generating: page.generating, submissions: page.submissions, cancellations: page.cancellations };
               const current = new URL(view.getURL());
               if (current.origin + current.pathname !== page.url) return;
               browserError = null;
-              let tracker = trackers.get(id);
-              if (!tracker) { tracker = new ReplyTracker(); trackers.set(id, tracker); }
+              const tracker = tracked.tracker;
               const completion = tracker.observe(page, Date.now());
-              if (!completion) return;
-              const result = await client.rpc(notifyCompletion, completion);
-              if (result.status !== 'disabled') tracker.acknowledge(completion.id);
+              store.upsert({ browserId: id, workspaceId: workspaces.get(id) ?? null,
+                url: page.url, title: page.title, state: tracker.state, updatedAt: Date.now() });
+              if (tracker.turn > tracked.startedTurn) { tracked.startedTurn = tracker.turn; notifyLocal(id, page.title, false); }
+              if (tracker.state === 'completed' && tracker.turn > tracked.completedTurn) {
+                tracked.completedTurn = tracker.turn; notifyLocal(id, page.title, true);
+              }
+              if (completion && status.configured) {
+                // Keep immutable pending events when another turn starts or a tab closes.
+                completions.set(completion.id, completion);
+                tracker.acknowledge(completion.id);
+                sendQueued();
+              }
             }).catch(() => {
-              browserError = '读取或发送失败；保持桌面端运行，插件会自动重试。';
-            }).finally(() => { pending.delete(id); });
-          } catch {
-            browserError = '网页正在导航，插件会自动重试。';
-          }
+              if (stopped || tabs.get(id) !== tracked) return;
+              browserError = '网页读取失败，插件会自动重试。';
+              const old = store.getSnapshot().tasks.find(task => task.browserId === id);
+              store.upsert({ browserId: id, workspaceId: workspaces.get(id) ?? null,
+                url: old?.url ?? 'https://chatgpt.com/', title: old?.title ?? 'ChatGPT', state: 'unavailable', updatedAt: Date.now() });
+            }).finally(() => { tracked.reading = false; });
+          } catch { browserError = '网页正在导航，插件会自动重试。'; }
         }
-        for (const id of trackers.keys()) if (!seen.has(id)) trackers.delete(id);
-      } else {
-        trackers.clear();
-      }
+        for (const id of tabs.keys()) if (!seen.has(id)) tabs.delete(id);
+        store.retain(seen);
+      } else { tabs.clear(); store.clear(); }
       if (!stopped && Date.now() - lastHeartbeat >= 15000) {
         await client.rpc(heartbeat, { clientId, browserCount, supported, error: browserError, sample });
         lastHeartbeat = Date.now();
       }
     } catch {
       // A disconnected host is retried without creating another Paseo connection.
-    } finally {
-      busy = false;
-    }
+    } finally { busy = false; }
   };
   void tick();
   const timer = setInterval(() => { void tick(); }, 1000);
   return () => {
-    stopped = true;
-    clearInterval(timer);
-    trackers.clear();
+    if (stopped) return;
+    stopped = true; clearInterval(timer); removeClick(); tabs.clear(); completions.clear(); store.clear();
     for (const view of observedViews) {
       try {
         if (isChatGptUrl(view.getURL())) void view.executeJavaScript(`(() => {

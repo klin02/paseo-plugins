@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PluginClientContext } from '@getpaseo/plugin/client';
-import { startBrowserMonitor } from '../client/web.ts';
+import { TaskStore } from '../client/tasks.ts';
+import { focusBrowser, startBrowserMonitor } from '../client/web.ts';
 import type { PageSnapshot } from '../client/tracker.ts';
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -118,6 +119,109 @@ test('disconnect and contribution reload recover without duplicate timers or his
     stop(); await settle(); assert.equal(timers.size, 0); assert.equal(cleanups, 2);
   } finally {
     stop(); globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; Date.now = originalNow;
+    if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
+    if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
+  }
+});
+
+test('local activity and native notifications continue through ntfy stalls and clean up closed tabs', async () => {
+  const originalInterval = globalThis.setInterval; const originalClear = globalThis.clearInterval;
+  const originalNow = Date.now;
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalDocument = globals.document; const originalDesktop = globals.paseoDesktop;
+  let tick = () => {}; let now = 0; let configured = false; let enabled = true;
+  let listener: (payload: unknown) => void = () => {}; let clickRemoved = 0;
+  let deliver: (value: unknown) => void = () => {};
+  let rejectDelivery: (error: Error) => void = () => {}; let requests = 0;
+  const notices: { title: string; data: unknown }[] = []; const focused: string[] = [];
+  const snapshot: PageSnapshot = {
+    documentId: 'doc', url: 'https://chatgpt.com/c/local', title: 'Local conversation',
+    promptKey: 'user', answerKey: 'reply', answerHash: 'hash', completionId: 'c'.repeat(64),
+    generating: false, cancellations: 0, submissions: 0, error: false,
+  };
+  let failRead = false;
+  const view = { getAttribute: () => 'local', getURL: () => snapshot.url,
+    executeJavaScript: async (script: string) => {
+      if (script.includes('removeEventListener')) return null;
+      if (failRead) throw new Error('navigating');
+      return { ...snapshot };
+    } };
+  let views = [view];
+  const client = { openScreen: (input: { params: { focus: string } }) => { focused.push(input.params.focus); }, rpc: async (contract: { name: string }) => {
+    if (contract.name === 'monitor.status') return { configured, enabled };
+    if (contract.name === 'monitor.heartbeat') return {};
+    requests++; return await new Promise((resolve, reject) => { deliver = resolve; rejectDelivery = reject; });
+  } } as unknown as PluginClientContext;
+  const store = new TaskStore(); let stop = () => {};
+  const step = async (time: number) => { now = time; tick(); await settle(); };
+  try {
+    Date.now = () => now;
+    globals.document = { querySelectorAll: () => views };
+    globals.paseoDesktop = {
+      notification: { sendNotification: async (input: { title: string; data: unknown }) => { notices.push(input); return true; } },
+      events: { on: async (_: string, handler: (payload: unknown) => void) => { listener = handler; return () => { clickRemoved++; }; } },
+      browser: { focus: async (id: string) => { focused.push(id); }, executeAutomationCommand: async () => ({ ok: true,
+        result: { tabs: [{ browserId: 'local', workspaceId: 'workspace' }] } }) },
+    };
+    globalThis.setInterval = ((callback: () => void) => { tick = callback; return 1; }) as unknown as typeof setInterval;
+    globalThis.clearInterval = (() => {}) as typeof clearInterval;
+    stop = startBrowserMonitor(client, true, store); await settle();
+    assert.equal(store.getSnapshot().tasks[0].state, 'idle');
+    assert.equal(store.getSnapshot().tasks[0].workspaceId, 'workspace');
+    assert.equal(notices.length, 0, 'history is only a baseline even without ntfy');
+    snapshot.generating = true; await step(1000);
+    assert.equal(store.getSnapshot().tasks[0].state, 'running');
+    assert.equal(notices.length, 1); assert.match(notices[0].title, /任务开始.*Local conversation/);
+    snapshot.generating = false; await step(2000); await step(4000);
+    assert.equal(store.getSnapshot().tasks[0].state, 'completed');
+    assert.equal(notices.length, 2); assert.match(notices[1].title, /回复完成/);
+    assert.equal(requests, 0, 'no ntfy topic is needed for local notifications');
+    configured = true; await step(5000); assert.equal(requests, 1);
+    await step(6000); assert.equal(requests, 1); assert.equal(notices.length, 2);
+    listener({ data: notices[1].data }); await settle(); assert.deepEqual(focused, ['local']);
+    listener({ data: { browserId: 'local', webGptClient: 'another-computer' } }); await settle();
+    assert.equal(focused.length, 1, 'ignore another contribution notification');
+    snapshot.generating = true; snapshot.promptKey = 'user-2'; snapshot.completionId = 'd'.repeat(64);
+    await step(7000); assert.equal(store.getSnapshot().tasks[0].state, 'running');
+    assert.equal(notices.length, 3, 'a stalled ntfy call does not stall a later turn');
+    rejectDelivery(new Error('temporary failure after next turn started')); await settle();
+    snapshot.generating = false; await step(8000);
+    assert.equal(requests, 2, 'earlier completion is retried independently of the current turn');
+    deliver({ status: 'sent' }); await settle();
+    await step(10000);
+    assert.equal(requests, 3, 'the later completion is delivered as well');
+    assert.equal(store.getSnapshot().tasks[0].state, 'completed', 'old delivery acknowledgment cannot disarm a new turn');
+    assert.equal(notices.length, 4);
+    failRead = true; await step(11000); assert.equal(store.getSnapshot().tasks[0].state, 'unavailable');
+    failRead = false; await step(12000); assert.equal(store.getSnapshot().tasks[0].state, 'completed');
+    assert.equal(notices.length, 4, 'temporary read errors do not duplicate completion');
+    views = []; await step(13000); assert.equal(store.getSnapshot().tasks.length, 0);
+    listener({ data: notices[1].data }); await settle(); assert.equal(focused.length, 1, 'closed tab is ignored');
+    views = [view]; await step(14000); assert.equal(notices.length, 4, 'reopened completed page establishes a baseline');
+    enabled = false; await step(15000); assert.equal(store.getSnapshot().tasks.length, 0);
+    stop(); await settle(); assert.equal(clickRemoved, 1);
+  } finally {
+    stop(); globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; Date.now = originalNow;
+    if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
+    if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
+  }
+});
+
+test('browser focus selects the existing tab and rejects a closed native guest', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalDocument = globals.document; const originalDesktop = globals.paseoDesktop;
+  let selected = false; let live = true;
+  try {
+    globals.document = { querySelector: (selector: string) => {
+      assert.equal(selector, '[data-testid="workspace-tab-browser_original"]');
+      return { click: () => { selected = true; } };
+    } };
+    globals.paseoDesktop = { browser: { focus: async (id: string) => { assert.equal(id, 'original'); assert.ok(selected); return live; } } };
+    await focusBrowser('original');
+    live = false;
+    await assert.rejects(focusBrowser('original'), /标签页已关闭/);
+    await assert.rejects(focusBrowser('invalid"selector'), /无效标签页/);
+  } finally {
     if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
     if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
   }

@@ -1,3 +1,4 @@
+import type { TaskState } from './tasks.ts';
 import type { CompletionEvent } from '../shared/contracts.ts';
 
 export interface PageSnapshot {
@@ -24,6 +25,13 @@ export function isChatGptUrl(value: string): boolean {
 }
 
 export class ReplyTracker {
+  state: TaskState = 'idle';
+  turn = 0;
+  private beginTurn(newSubmission = false): void {
+    if (newSubmission || !this.armed || this.state !== 'running') this.turn++;
+    this.armed = true;
+    this.state = 'running';
+  }
   private previous: PageSnapshot | null = null;
   private armed = false;
   private stableHash = '';
@@ -42,23 +50,26 @@ export class ReplyTracker {
         || this.submissionPending || page.submissions > old.submissions);
     if (old && page.submissions > old.submissions) this.submissionPending = true;
     if (!old || old.documentId !== page.documentId || (navigation && !continuedNewChat)) {
-      this.armed = page.generating;
+      this.armed = false;
+      this.state = page.error ? 'error' : 'idle';
+      if (page.generating && !page.error) this.beginTurn();
       this.stableHash = '';
       this.cancelledPrompt = '';
       this.submissionPending = false;
     } else if (page.cancellations > old.cancellations || page.error) {
       this.armed = false;
+      this.state = page.error ? 'error' : 'stopped';
       this.submissionPending = false;
       this.cancelledPrompt = page.promptKey;
       this.stableHash = '';
     } else if (this.submissionPending && (page.promptKey !== old.promptKey
       || page.answerHash !== old.answerHash)) {
-      this.armed = Boolean(page.promptKey);
+      if (page.promptKey) this.beginTurn(true);
       this.submissionPending = false;
       this.cancelledPrompt = '';
       this.stableHash = '';
     } else if (page.generating && !old.generating) {
-      this.armed = true;
+      this.beginTurn();
       this.submissionPending = false;
       this.cancelledPrompt = '';
       this.stableHash = '';
@@ -75,7 +86,9 @@ export class ReplyTracker {
       this.stableSince = now;
       return null;
     }
-    if (now - this.stableSince < 1800 || this.delivered === page.completionId) return null;
+    if (now - this.stableSince < 1800) return null;
+    this.state = 'completed';
+    if (this.delivered === page.completionId) { this.armed = false; return null; }
     return { id: page.completionId, url: page.url, title: page.title.slice(0, 200) };
   }
 

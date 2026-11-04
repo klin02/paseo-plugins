@@ -32,10 +32,12 @@ try {
   const stop = plugin.default({
     addSettingsScreen: value => { registrations.push(['settings', value.id]); return () => {}; },
     addCommandCenterItem: value => { registrations.push(['command', value.id]); return () => {}; },
+    addScreen: value => { registrations.push(['screen', value.id]); return () => {}; },
+    addSidebarHeaderItem: value => { registrations.push(['sidebar', value.id]); return () => {}; },
     rpc: (contract, input) => client.invokePluginRpc(id, contract.name, input),
   });
   assert.equal(typeof stop, 'function'); stop();
-  assert.deepEqual(registrations.map(value => value[0]), ['settings', 'command']);
+  assert.deepEqual(registrations.map(value => value[0]), ['settings', 'command', 'screen', 'sidebar']);
   const current = await client.invokePluginRpc(id, 'monitor.status', {});
   const settings = await client.invokePluginRpc(id, settingsRpc('notifications').read.name, {});
   assert.equal(settings.status, 'ready');

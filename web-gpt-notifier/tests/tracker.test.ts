@@ -115,3 +115,43 @@ test('quick first reply preserves captured submission when a new conversation UR
   tracker.observe(done, 1000);
   assert.ok(tracker.observe(done, 4000));
 });
+
+test('task state separates history, cancellation, errors and completion from acknowledgment', () => {
+  const tracker = trackerWithBaseline();
+  assert.equal(tracker.state, 'idle'); assert.equal(tracker.turn, 0);
+  tracker.observe(page({ generating: true }), 1000);
+  assert.equal(tracker.state, 'running'); assert.equal(tracker.turn, 1);
+  tracker.observe(page({ cancellations: 1 }), 2000);
+  assert.equal(tracker.state, 'stopped');
+  tracker.observe(page({ cancellations: 1, generating: true }), 3000);
+  assert.equal(tracker.turn, 2);
+  tracker.observe(page({ cancellations: 1, error: true }), 4000);
+  assert.equal(tracker.state, 'error');
+  tracker.observe(page({ cancellations: 1, generating: true }), 5000);
+  tracker.observe(page({ cancellations: 1 }), 6000);
+  const event = tracker.observe(page({ cancellations: 1 }), 8000)!;
+  assert.equal(tracker.state, 'completed');
+  tracker.acknowledge(event.id); assert.equal(tracker.state, 'completed');
+  tracker.observe(page({ cancellations: 1, generating: true }), 9000);
+  tracker.observe(page({ cancellations: 1 }), 10000);
+  assert.equal(tracker.observe(page({ cancellations: 1 }), 12000), null, 'same output is already acknowledged');
+  assert.equal(tracker.state, 'completed', 'identical regeneration must still stop the spinner');
+});
+
+test('a new prompt appearing before generation controls starts only one local turn', () => {
+  const tracker = trackerWithBaseline();
+  const next = page({ promptKey: 'next-user', answerKey: '', answerHash: '', submissions: 1 });
+  tracker.observe(next, 1000); assert.equal(tracker.turn, 1);
+  tracker.observe({ ...next, generating: true }, 2000); assert.equal(tracker.turn, 1);
+});
+
+test('a confirmed next submission starts a distinct turn during the stability window', () => {
+  const tracker = trackerWithBaseline();
+  tracker.observe(page({ generating: true }), 1000);
+  tracker.observe(page(), 2000);
+  const next = page({ promptKey: 'next-user', answerHash: 'next-answer', submissions: 1 });
+  tracker.observe({ ...next, generating: true }, 3000);
+  assert.equal(tracker.turn, 2);
+  tracker.observe(next, 4000); tracker.observe(next, 6000);
+  assert.equal(tracker.state, 'completed');
+});
