@@ -87,7 +87,7 @@ export async function focusBrowser(browserId: string, signal?: AbortSignal): Pro
   if (!/^[A-Za-z0-9_-]+$/.test(browserId)) throw new Error('无效标签页。');
   // shortcut: the Desktop tab selector is internal to Paseo 0.14/0.15.
   for (let attempt = 0; attempt < 40; attempt++) {
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw Object.assign(new Error('Plugin stopped'), { name: 'AbortError' });
     const tab = desktopGlobals().document?.querySelector?.(`[data-testid="workspace-tab-browser_${browserId}"]`);
     const viewRect = desktopGlobals().document?.querySelector?.(`[data-paseo-browser-surface="${browserId}"][aria-hidden="false"]`)?.getBoundingClientRect?.();
     const alreadyVisible = viewRect && viewRect.width > 1 && viewRect.height > 1 && viewRect.x >= 0 && viewRect.y >= 0;
@@ -101,7 +101,7 @@ export async function focusBrowser(browserId: string, signal?: AbortSignal): Pro
       const abort = () => {
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);
-        reject(signal?.reason ?? new Error('Plugin stopped'));
+        reject(Object.assign(new Error('Plugin stopped'), { name: 'AbortError' }));
       };
       signal?.addEventListener('abort', abort, { once: true });
       if (signal?.aborted) abort();
