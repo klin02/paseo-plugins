@@ -124,7 +124,7 @@ test('disconnect and contribution reload recover without duplicate timers or his
   }
 });
 
-test('local activity and native notifications continue through ntfy stalls and clean up closed tabs', async () => {
+test('completion-only native notifications and activity survive ntfy stalls and closed tabs', async () => {
   const originalInterval = globalThis.setInterval; const originalClear = globalThis.clearInterval;
   const originalNow = Date.now;
   const globals = globalThis as unknown as Record<string, unknown>;
@@ -171,19 +171,19 @@ test('local activity and native notifications continue through ntfy stalls and c
     assert.equal(notices.length, 0, 'history is only a baseline even without ntfy');
     snapshot.generating = true; await step(1000);
     assert.equal(store.getSnapshot().tasks[0].state, 'running');
-    assert.equal(notices.length, 1); assert.match(notices[0].title, /任务开始.*Local conversation/);
+    assert.equal(notices.length, 0, 'starting a reply updates activity without a notification');
     snapshot.generating = false; await step(2000); await step(4000);
     assert.equal(store.getSnapshot().tasks[0].state, 'completed');
-    assert.equal(notices.length, 2); assert.match(notices[1].title, /回复完成/);
+    assert.equal(notices.length, 1); assert.match(notices[0].title, /回复完成.*Local conversation/);
     assert.equal(requests, 0, 'no ntfy topic is needed for local notifications');
     configured = true; await step(5000); assert.equal(requests, 1);
-    await step(6000); assert.equal(requests, 1); assert.equal(notices.length, 2);
-    listener({ data: notices[1].data }); await settle(); assert.deepEqual(focused, ['local']);
+    await step(6000); assert.equal(requests, 1); assert.equal(notices.length, 1);
+    listener({ data: notices[0].data }); await settle(); assert.deepEqual(focused, ['local']);
     listener({ data: { browserId: 'local', webGptClient: 'another-computer' } }); await settle();
     assert.equal(focused.length, 1, 'ignore another contribution notification');
     snapshot.generating = true; snapshot.promptKey = 'user-2'; snapshot.completionId = 'd'.repeat(64);
     await step(7000); assert.equal(store.getSnapshot().tasks[0].state, 'running');
-    assert.equal(notices.length, 3, 'a stalled ntfy call does not stall a later turn');
+    assert.equal(notices.length, 1, 'a later reply runs without a start notification despite stalled ntfy');
     rejectDelivery(new Error('temporary failure after next turn started')); await settle();
     snapshot.generating = false; await step(8000);
     assert.equal(requests, 2, 'earlier completion is retried independently of the current turn');
@@ -191,13 +191,13 @@ test('local activity and native notifications continue through ntfy stalls and c
     await step(10000);
     assert.equal(requests, 3, 'the later completion is delivered as well');
     assert.equal(store.getSnapshot().tasks[0].state, 'completed', 'old delivery acknowledgment cannot disarm a new turn');
-    assert.equal(notices.length, 4);
+    assert.equal(notices.length, 2);
     failRead = true; await step(11000); assert.equal(store.getSnapshot().tasks[0].state, 'unavailable');
     failRead = false; await step(12000); assert.equal(store.getSnapshot().tasks[0].state, 'completed');
-    assert.equal(notices.length, 4, 'temporary read errors do not duplicate completion');
+    assert.equal(notices.length, 2, 'temporary read errors do not duplicate completion');
     views = []; await step(13000); assert.equal(store.getSnapshot().tasks.length, 0);
-    listener({ data: notices[1].data }); await settle(); assert.equal(focused.length, 1, 'closed tab is ignored');
-    views = [view]; await step(14000); assert.equal(notices.length, 4, 'reopened completed page establishes a baseline');
+    listener({ data: notices[0].data }); await settle(); assert.equal(focused.length, 1, 'closed tab is ignored');
+    views = [view]; await step(14000); assert.equal(notices.length, 2, 'reopened completed page establishes a baseline');
     enabled = false; await step(15000); assert.equal(store.getSnapshot().tasks.length, 0);
     stop(); await settle(); assert.equal(clickRemoved, 1);
   } finally {

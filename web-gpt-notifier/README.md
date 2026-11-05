@@ -1,6 +1,6 @@
 # Web GPT Notifier
 
-Show ChatGPT task activity in Paseo Desktop, send native start/completion notifications, and optionally publish completion notices to ntfy. No agent prompts, OpenAI API key, or changes to Paseo or another notifier plugin are needed.
+Show ChatGPT task activity in Paseo Desktop, send native completion notifications, and optionally publish completion notices to ntfy. No agent prompts, OpenAI API key, or changes to Paseo or another notifier plugin are needed.
 
 ## Install
 
@@ -12,7 +12,7 @@ Install on the daemon your Desktop is connected to. Its client contribution runs
 
 Native Desktop notifications and task activity work with no ntfy topic. Allow Paseo notifications in your operating system. To enable ntfy too, open **Settings → Web GPT Notifier**, enter the server, topic, and optional token, save, and send a test notice. These values are stored only in the host's local Paseo settings. The source intentionally ships with an empty topic. Do not add real destinations, tokens, local settings, or production logs to this repository.
 
-Open ChatGPT in Paseo's built-in browser. Monitoring starts automatically while the plugin is loaded. The **Web GPT** sidebar item shows conversation names and task states; running tasks spin. Each workspace with a local ChatGPT tab gets a **GPT** header indicator and running count. Click a task or a native notification to return to its original tab. The settings screen shows desktop presence and the number of ChatGPT tabs detected. Computer receivers can subscribe at their ntfy server's web app or install its PWA.
+Open ChatGPT in Paseo's built-in browser. Monitoring starts automatically while the plugin is loaded. The **Web GPT** sidebar item shows conversation names and task states; running tasks spin. Starting a reply updates activity without a notification; native and ntfy notices are sent only after the reply completes. Each workspace with a local ChatGPT tab gets a **GPT** header indicator and running count. Click a task or a native notification to return to its original tab. The settings screen shows desktop presence and the number of ChatGPT tabs detected. Computer receivers can subscribe at their ntfy server's web app or install its PWA.
 
 ## Detection and delivery
 

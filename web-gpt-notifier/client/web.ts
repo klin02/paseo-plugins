@@ -113,7 +113,6 @@ interface TrackedTab {
   view: BrowserView;
   tracker: ReplyTracker;
   reading: boolean;
-  startedTurn: number;
   completedTurn: number;
 }
 export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean, store = new TaskStore()): () => void {
@@ -143,12 +142,12 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
     }).then(remove => { if (stopped) remove(); else removeClick = remove; })
       .catch(() => store.setMonitor({ error: '无法注册通知点击处理，请从 Web GPT 侧栏返回会话。' }));
   }
-  const notifyLocal = (id: string, title: string, finished: boolean) => {
+  const notifyLocal = (id: string, title: string) => {
     const notification = host.paseoDesktop?.notification;
     if (!notification) { store.setMonitor({ error: '当前桌面端未提供系统通知接口。' }); return; }
     void notification.sendNotification({
-      title: `ChatGPT ${finished ? '回复完成' : '任务开始'} · ${title.slice(0, 200)}`,
-      body: finished ? '回复已完成，点击返回会话。' : '正在生成回复，点击返回会话。',
+      title: `ChatGPT 回复完成 · ${title.slice(0, 200)}`,
+      body: '回复已完成，点击返回会话。',
       data: { webGptClient: clientId, browserId: id },
     }).then(sent => {
       if (!stopped && !sent) store.setMonitor({ error: '系统通知未发送，请检查操作系统的 Paseo 通知设置。' });
@@ -203,7 +202,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
             seen.add(id); browserCount++; observedViews.add(view);
             let tab = tabs.get(id);
             if (!tab || tab.view !== view) {
-              tab = { view, tracker: new ReplyTracker(), reading: false, startedTurn: 0, completedTurn: 0 };
+              tab = { view, tracker: new ReplyTracker(), reading: false, completedTurn: 0 };
               tabs.set(id, tab);
             }
             if (tab.reading) continue;
@@ -222,9 +221,8 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
               const completion = tracker.observe(page, Date.now());
               store.upsert({ browserId: id, workspaceId: workspaces.get(id) ?? null,
                 url: page.url, title: page.title, state: tracker.state, updatedAt: Date.now() });
-              if (tracker.turn > tracked.startedTurn) { tracked.startedTurn = tracker.turn; notifyLocal(id, page.title, false); }
               if (tracker.state === 'completed' && tracker.turn > tracked.completedTurn) {
-                tracked.completedTurn = tracker.turn; notifyLocal(id, page.title, true);
+                tracked.completedTurn = tracker.turn; notifyLocal(id, page.title);
               }
               if (completion && status.configured) {
                 // Keep immutable pending events when another turn starts or a tab closes.
