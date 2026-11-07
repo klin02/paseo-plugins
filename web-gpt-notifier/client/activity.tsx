@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import type {
-  PluginButtonRegistration, PluginClientContext, PluginHostProps, PluginIconProps,
+  PluginButtonIconProps, PluginButtonRegistration, PluginClientContext, PluginHostProps, PluginIconProps,
   PluginPopoverProps, PluginScreenProps, PluginSidebarItemProps,
 } from '@getpaseo/plugin/client';
 import { Icon, SidebarRow } from '@getpaseo/plugin/client/ui';
@@ -12,12 +12,16 @@ const labels: Record<TaskState, string> = {
   error: '网页出错', unavailable: '暂时无法读取',
 };
 const icons: Record<TaskState, string> = {
-  idle: 'MessageCircle', running: 'LoaderCircle', completed: 'Check', stopped: 'Square',
+  idle: 'MessageCircle', running: 'LoaderCircle', completed: 'CircleCheck', stopped: 'Square',
   error: 'CircleAlert', unavailable: 'CircleAlert',
 };
 
 function RunningIcon({ color }: PluginIconProps) {
   return <ActivityIndicator size="small" color={color} />;
+}
+
+function CompletedIcon({ size, theme }: PluginButtonIconProps) {
+  return <Icon icon={icons.completed} size={size} color={theme.colors.statusSuccess} />;
 }
 
 export function registerActivityUi(
@@ -52,10 +56,10 @@ export function registerActivityUi(
             onPress={() => openTask(task)}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}>
             {task.state === 'running' ? <RunningIcon color={theme.colors.accent} size={18} />
-              : <Icon icon={icons[task.state]} color={theme.colors.foregroundMuted} size={18} />}
+              : <Icon icon={icons[task.state]} color={task.state === 'completed' ? theme.colors.statusSuccess : theme.colors.foregroundMuted} size={18} />}
             <View style={{ flex: 1, gap: 4 }}>
               <Text numberOfLines={2} style={{ color: theme.colors.foreground, fontSize: 14 }}>{task.title || 'ChatGPT'}</Text>
-              <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{labels[task.state]}</Text>
+              <Text style={{ color: task.state === 'completed' ? theme.colors.statusSuccess : theme.colors.foregroundMuted, fontSize: 12 }}>{labels[task.state]}</Text>
             </View>
           </Pressable>
         ))}
@@ -102,10 +106,15 @@ export function registerActivityUi(
   function SidebarItem(props: PluginSidebarItemProps) {
     const snapshot = useTasks();
     const running = snapshot.tasks.filter(task => task.state === 'running').length;
+    const completed = snapshot.tasks.filter(task => task.state === 'completed').length;
     return <SidebarRow icon={running ? RunningIcon : 'Globe'} label="Web GPT"
       active={props.currentScreen?.screenId === 'activity'}
       onPress={() => props.openPopover(TasksPopover)}
-      trailing={<Text accessibilityLabel={`${running} 个进行中`} style={{ color: props.theme.colors.foregroundMuted, fontSize: 12 }}>{running || snapshot.tasks.length || ''}</Text>} />;
+      trailing={!running && completed ? <View accessibilityLabel={`${completed} 个已完成`}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Icon icon={icons.completed} size={14} color={props.theme.colors.statusSuccess} />
+        <Text style={{ color: props.theme.colors.statusSuccess, fontSize: 12 }}>{completed}</Text>
+      </View> : <Text accessibilityLabel={`${running} 个进行中`} style={{ color: props.theme.colors.foregroundMuted, fontSize: 12 }}>{running || snapshot.tasks.length || ''}</Text>} />;
   }
 
   const removeScreen = client.addScreen({ id: 'activity', title: 'Web GPT', Component: TasksScreen });
@@ -120,13 +129,14 @@ export function registerActivityUi(
     for (const workspaceId of workspaceIds) {
       const tasks = snapshot.tasks.filter(task => task.workspaceId === workspaceId);
       const running = tasks.filter(task => task.state === 'running').length;
-      const signature = `${running}:${tasks.length}:${snapshot.enabled}`;
+      const completed = tasks.filter(task => task.state === 'completed').length;
+      const signature = `${running}:${completed}:${tasks.length}:${snapshot.enabled}`;
       const old = headers.get(workspaceId);
       if (old?.signature === signature) continue;
       const button = {
-        title: snapshot.enabled ? `Web GPT · ${running} 个进行中，${tasks.length} 个标签页` : 'Web GPT · 监控已暂停',
+        title: snapshot.enabled ? `Web GPT · ${running} 个进行中，${completed} 个已完成，${tasks.length} 个标签页` : 'Web GPT · 监控已暂停',
         label: running ? `GPT ${running}` : 'GPT',
-        icon: running ? RunningIcon : 'Globe',
+        icon: running ? RunningIcon : completed ? CompletedIcon : 'Globe',
         behavior: { kind: 'action' as const, onPress: () => client.openScreen({ screenId: 'activity', params: { workspaceId } }) },
       };
       if (old) { old.registration.update(button); old.signature = signature; }

@@ -42,7 +42,7 @@ const task = (id: string, workspaceId: string | null, state: BrowserTask['state'
   browserId: id, workspaceId, state, title: `Conversation ${id}`, url: `https://chatgpt.com/c/${id}`, updatedAt: 10,
 });
 const props = (compact = false, dark = false) => ({
-  theme: { colors: { foreground: dark ? '#fff' : '#111', foregroundMuted: dark ? '#aaa' : '#555', accent: '#08f', surface0: dark ? '#111' : '#fff' } },
+  theme: { colors: { foreground: dark ? '#fff' : '#111', foregroundMuted: dark ? '#aaa' : '#555', accent: '#08f', statusSuccess: dark ? '#6fcf97' : '#157a4d', surface0: dark ? '#111' : '#fff' } },
   layout: { compact, platform: 'web' }, host: { id: 'test', label: 'Test' }, params: {},
 });
 function elements(value: any): Element[] {
@@ -74,7 +74,10 @@ test('workspace indicators follow local task lifecycle and release registrations
   assert.equal(h.routes[0].params.workspaceId, 'workspace-a');
   h.store.upsert(task('one', 'workspace-a', 'completed'));
   assert.equal(h.headers[0].button.label, 'GPT');
-  assert.equal(h.headers[0].button.icon, 'Globe');
+  assert.equal(typeof h.headers[0].button.icon, 'function');
+  const completedIcon = elements(jsx(h.headers[0].button.icon, { ...props(), size: 18, color: '#555' }))[0];
+  assert.equal(completedIcon.props.icon, 'CircleCheck');
+  assert.equal(completedIcon.props.color, props().theme.colors.statusSuccess);
   h.store.retain(new Set(['two']));
   assert.equal(h.headers[0].removed, 1);
   h.cleanup();
@@ -152,4 +155,40 @@ test('missing original workspace or navigation reports failure without creating 
     assert.equal(h.focused.length, 0);
     h.cleanup();
   }
+});
+
+
+test('completed tasks show green checks in rows, sidebar and header until the next turn', () => {
+  const h = harness();
+  h.store.upsert(task('done', 'workspace-a', 'completed'));
+  for (const compact of [false, true]) for (const dark of [false, true]) {
+    const surface = props(compact, dark);
+    const nodes = elements(h.screens[0].Component(surface));
+    const check = nodes.find(node => node.type === 'Icon');
+    assert.equal(check?.props.icon, 'CircleCheck');
+    assert.equal(check?.props.color, surface.theme.colors.statusSuccess);
+    const label = nodes.find(node => node.type === 'Text' && text(node) === '已完成');
+    assert.equal(label?.props.style.color, surface.theme.colors.statusSuccess);
+    const row = h.sidebars[0].Component(surface);
+    const sidebarCheck = elements(row.props.trailing).find(node => node.type === 'Icon');
+    assert.equal(sidebarCheck?.props.icon, 'CircleCheck');
+    assert.equal(sidebarCheck?.props.color, surface.theme.colors.statusSuccess);
+    assert.match(text(row.props.trailing), /1/);
+    assert.match(h.headers[0].button.title, /1 个已完成/);
+    const header = elements(jsx(h.headers[0].button.icon, { ...surface, size: 16, color: '#555' }))[0];
+    assert.equal(header.props.color, surface.theme.colors.statusSuccess);
+  }
+  h.store.upsert(task('active', 'workspace-a', 'running'));
+  let row = h.sidebars[0].Component(props());
+  assert.equal(elements(row.props.trailing).filter(node => node.type === 'Icon').length, 0, 'running work takes priority');
+  assert.equal(h.headers[0].button.label, 'GPT 1');
+  assert.equal(elements(jsx(h.headers[0].button.icon, { color: '#08f', size: 16 }))[0].type, 'ActivityIndicator');
+  h.store.retain(new Set(['done']));
+  for (const state of ['running', 'stopped', 'error', 'idle', 'unavailable'] as const) {
+    h.store.upsert(task('done', 'workspace-a', state));
+    row = h.sidebars[0].Component(props());
+    assert.equal(elements(row.props.trailing).filter(node => node.type === 'Icon').length, 0, `${state} is not a completed result`);
+    if (state !== 'running') assert.equal(h.headers[0].button.icon, 'Globe');
+  }
+  h.cleanup();
 });

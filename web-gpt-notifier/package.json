@@ -1,6 +1,6 @@
 {
   "name": "@klin02/paseo-web-gpt-notifier",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Show ChatGPT task activity and Desktop notifications, with optional ntfy completion delivery.",
