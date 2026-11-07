@@ -8,9 +8,10 @@ import { Icon, SidebarRow } from '@getpaseo/plugin/client/ui';
 import type { BrowserTask, TaskState, TaskStore } from './tasks.ts';
 
 const labels: Record<TaskState, string> = {
-  idle: '等待提问', running: '进行中', completed: '已完成', stopped: '已停止',
+  idle: '暂无新问答', running: '进行中', completed: '已读', stopped: '已停止',
   error: '网页出错', unavailable: '暂时无法读取',
 };
+const taskLabel = (task: BrowserTask) => task.state === 'completed' && task.unread ? '已完成未读' : labels[task.state];
 const icons: Record<TaskState, string> = {
   idle: 'MessageCircle', running: 'LoaderCircle', completed: 'CircleCheck', stopped: 'Square',
   error: 'CircleAlert', unavailable: 'CircleAlert',
@@ -36,7 +37,7 @@ export function registerActivityUi(
   }) {
     const snapshot = useTasks();
     const tasks = snapshot.tasks.filter(task => !workspaceId || task.workspaceId === workspaceId)
-      .toSorted((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || b.updatedAt - a.updatedAt);
+      .toSorted((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || Number(b.unread) - Number(a.unread) || b.updatedAt - a.updatedAt);
     const running = tasks.filter(task => task.state === 'running').length;
     const openTask = (task: BrowserTask) => {
       beforeOpen?.();
@@ -52,14 +53,14 @@ export function registerActivityUi(
         {!tasks.length ? <Text style={{ color: theme.colors.foregroundMuted }}>暂无 ChatGPT 标签页。</Text> : null}
         {tasks.map(task => (
           <Pressable key={task.browserId} accessibilityRole="button"
-            accessibilityLabel={`${task.title || 'ChatGPT'}，${labels[task.state]}`}
+            accessibilityLabel={`${task.title || 'ChatGPT'}，${taskLabel(task)}`}
             onPress={() => openTask(task)}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}>
             {task.state === 'running' ? <RunningIcon color={theme.colors.accent} size={18} />
-              : <Icon icon={icons[task.state]} color={task.state === 'completed' ? theme.colors.statusSuccess : theme.colors.foregroundMuted} size={18} />}
+              : <Icon icon={icons[task.state]} color={task.state === 'completed' && task.unread ? theme.colors.statusSuccess : theme.colors.foregroundMuted} size={18} />}
             <View style={{ flex: 1, gap: 4 }}>
               <Text numberOfLines={2} style={{ color: theme.colors.foreground, fontSize: 14 }}>{task.title || 'ChatGPT'}</Text>
-              <Text style={{ color: task.state === 'completed' ? theme.colors.statusSuccess : theme.colors.foregroundMuted, fontSize: 12 }}>{labels[task.state]}</Text>
+              <Text style={{ color: task.state === 'completed' && task.unread ? theme.colors.statusSuccess : theme.colors.foregroundMuted, fontSize: 12 }}>{taskLabel(task)}</Text>
             </View>
           </Pressable>
         ))}
@@ -81,7 +82,7 @@ export function registerActivityUi(
       try {
         props.navigation.openWorkspace({ workspaceId: task.workspaceId });
         // Navigation unmounts this screen; focus must finish selecting the resident tab.
-        void focusBrowser(browserId).catch(() => {
+        void focusBrowser(browserId).then(() => store.markRead(browserId, task.completionId)).catch(() => {
           store.setMonitor({ error: '无法打开原标签页，请确认该网页仍在当前窗口中。' });
         });
       } catch {
@@ -106,14 +107,14 @@ export function registerActivityUi(
   function SidebarItem(props: PluginSidebarItemProps) {
     const snapshot = useTasks();
     const running = snapshot.tasks.filter(task => task.state === 'running').length;
-    const completed = snapshot.tasks.filter(task => task.state === 'completed').length;
+    const unread = snapshot.tasks.filter(task => task.state === 'completed' && task.unread).length;
     return <SidebarRow icon={running ? RunningIcon : 'Globe'} label="Web GPT"
       active={props.currentScreen?.screenId === 'activity'}
       onPress={() => props.openPopover(TasksPopover)}
-      trailing={!running && completed ? <View accessibilityLabel={`${completed} 个已完成`}
+      trailing={!running && unread ? <View accessibilityLabel={`${unread} 个已完成未读`}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         <Icon icon={icons.completed} size={14} color={props.theme.colors.statusSuccess} />
-        <Text style={{ color: props.theme.colors.statusSuccess, fontSize: 12 }}>{completed}</Text>
+        <Text style={{ color: props.theme.colors.statusSuccess, fontSize: 12 }}>{unread}</Text>
       </View> : <Text accessibilityLabel={`${running} 个进行中`} style={{ color: props.theme.colors.foregroundMuted, fontSize: 12 }}>{running || snapshot.tasks.length || ''}</Text>} />;
   }
 
@@ -129,14 +130,14 @@ export function registerActivityUi(
     for (const workspaceId of workspaceIds) {
       const tasks = snapshot.tasks.filter(task => task.workspaceId === workspaceId);
       const running = tasks.filter(task => task.state === 'running').length;
-      const completed = tasks.filter(task => task.state === 'completed').length;
-      const signature = `${running}:${completed}:${tasks.length}:${snapshot.enabled}`;
+      const unread = tasks.filter(task => task.state === 'completed' && task.unread).length;
+      const signature = `${running}:${unread}:${tasks.length}:${snapshot.enabled}`;
       const old = headers.get(workspaceId);
       if (old?.signature === signature) continue;
       const button = {
-        title: snapshot.enabled ? `Web GPT · ${running} 个进行中，${completed} 个已完成，${tasks.length} 个标签页` : 'Web GPT · 监控已暂停',
+        title: snapshot.enabled ? `Web GPT · ${running} 个进行中，${unread} 个已完成未读，${tasks.length} 个标签页` : 'Web GPT · 监控已暂停',
         label: running ? `GPT ${running}` : 'GPT',
-        icon: running ? RunningIcon : completed ? CompletedIcon : 'Globe',
+        icon: running ? RunningIcon : unread ? CompletedIcon : 'Globe',
         behavior: { kind: 'action' as const, onPress: () => client.openScreen({ screenId: 'activity', params: { workspaceId } }) },
       };
       if (old) { old.registration.update(button); old.signature = signature; }

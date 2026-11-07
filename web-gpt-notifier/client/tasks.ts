@@ -5,6 +5,8 @@ export interface BrowserTask {
   url: string;
   title: string;
   state: TaskState;
+  completionId: string | null;
+  unread: boolean;
   updatedAt: number;
 }
 export interface TaskSnapshot {
@@ -32,11 +34,19 @@ export class TaskStore {
       this.publish({ ...this.snapshot, ...update });
     }
   }
-  upsert(task: BrowserTask): void {
+  upsert(task: Omit<BrowserTask, 'unread'>): void {
     const old = this.snapshot.tasks.find(value => value.browserId === task.browserId);
+    const unread = Boolean(task.completionId) && (old?.completionId === task.completionId
+      && old.url === task.url ? old.unread : true);
     if (old && old.workspaceId === task.workspaceId && old.url === task.url
-      && old.title === task.title && old.state === task.state) return;
-    this.publish({ ...this.snapshot, tasks: [...this.snapshot.tasks.filter(value => value.browserId !== task.browserId), task] });
+      && old.title === task.title && old.state === task.state
+      && old.completionId === task.completionId && old.unread === unread) return;
+    this.publish({ ...this.snapshot, tasks: [...this.snapshot.tasks.filter(value => value.browserId !== task.browserId), { ...task, unread }] });
+  }
+  markRead(browserId: string, completionId: string | null): void {
+    const task = this.snapshot.tasks.find(value => value.browserId === browserId);
+    if (!task?.unread || task.state !== 'completed' || task.completionId !== completionId) return;
+    this.publish({ ...this.snapshot, tasks: this.snapshot.tasks.map(value => value === task ? { ...task, unread: false } : value) });
   }
   retain(ids: ReadonlySet<string>): void {
     const tasks = this.snapshot.tasks.filter(task => ids.has(task.browserId));

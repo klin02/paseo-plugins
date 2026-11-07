@@ -51,6 +51,7 @@ export const snapshotScript = String.raw`(async () => {
     title: document.title.replace(/\s*[-–|]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT',
     promptKey, answerKey, answerHash,
     completionId: await hash(location.pathname + ':' + promptKey + ':' + answerKey + ':' + answerHash),
+    focused: document.visibilityState === 'visible' && document.hasFocus?.() === true,
     generating, cancellations: state.cancellations, submissions: state.submissions, error,
   };
 })()`;
@@ -62,6 +63,8 @@ interface BrowserView {
 }
 interface DesktopGlobals {
   document?: {
+    visibilityState?: string;
+    hasFocus?(): boolean;
     querySelectorAll(selector: string): Iterable<BrowserView>;
     querySelector?(selector: string): {
       click(): void;
@@ -81,6 +84,12 @@ interface DesktopGlobals {
   };
 }
 const desktopGlobals = () => globalThis as unknown as DesktopGlobals;
+function isBrowserBeingViewed(browserId: string, guestFocused = false): boolean {
+  const doc = desktopGlobals().document;
+  if (doc?.visibilityState !== 'visible' || !(doc.hasFocus?.() || guestFocused)) return false;
+  const rect = doc.querySelector?.(`[data-paseo-browser-surface="${browserId}"][aria-hidden="false"]`)?.getBoundingClientRect?.();
+  return Boolean(rect && rect.width > 1 && rect.height > 1 && rect.x >= 0 && rect.y >= 0);
+}
 export async function focusBrowser(browserId: string, signal?: AbortSignal): Promise<void> {
   const browser = desktopGlobals().paseoDesktop?.browser;
   if (!browser) throw new Error('请在 Paseo 桌面端打开此标签页。');
@@ -114,6 +123,7 @@ interface TrackedTab {
   tracker: ReplyTracker;
   reading: boolean;
   completedTurn: number;
+  completionId: string | null;
 }
 export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean, store = new TaskStore()): () => void {
   const host = desktopGlobals();
@@ -202,7 +212,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
             seen.add(id); browserCount++; observedViews.add(view);
             let tab = tabs.get(id);
             if (!tab || tab.view !== view) {
-              tab = { view, tracker: new ReplyTracker(), reading: false, completedTurn: 0 };
+              tab = { view, tracker: new ReplyTracker(), reading: false, completedTurn: 0, completionId: null };
               tabs.set(id, tab);
             }
             if (tab.reading) continue;
@@ -219,9 +229,14 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
               browserError = null;
               const tracker = tracked.tracker;
               const completion = tracker.observe(page, Date.now());
+              const justCompleted = tracker.state === 'completed' && tracker.turn > tracked.completedTurn;
+              // Keep read acknowledgements tied to a turn, not later DOM/hash changes.
+              if (justCompleted) tracked.completionId = `${page.documentId}:${tracker.turn}:${page.completionId}`;
               store.upsert({ browserId: id, workspaceId: workspaces.get(id) ?? null,
-                url: page.url, title: page.title, state: tracker.state, updatedAt: Date.now() });
-              if (tracker.state === 'completed' && tracker.turn > tracked.completedTurn) {
+                url: page.url, title: page.title, state: tracker.state,
+                completionId: tracker.state === 'completed' ? tracked.completionId : null, updatedAt: Date.now() });
+              if (tracker.state === 'completed' && isBrowserBeingViewed(id, page.focused)) store.markRead(id, tracked.completionId);
+              if (justCompleted) {
                 tracked.completedTurn = tracker.turn; notifyLocal(id, page.title);
               }
               if (completion && status.configured) {
@@ -235,7 +250,7 @@ export function startBrowserMonitor(client: PluginClientContext, isWeb: boolean,
               browserError = '网页读取失败，插件会自动重试。';
               const old = store.getSnapshot().tasks.find(task => task.browserId === id);
               store.upsert({ browserId: id, workspaceId: workspaces.get(id) ?? null,
-                url: old?.url ?? 'https://chatgpt.com/', title: old?.title ?? 'ChatGPT', state: 'unavailable', updatedAt: Date.now() });
+                url: old?.url ?? 'https://chatgpt.com/', title: old?.title ?? 'ChatGPT', state: 'unavailable', completionId: old?.completionId ?? null, updatedAt: Date.now() });
             }).finally(() => { tracked.reading = false; });
           } catch { browserError = '网页正在导航，插件会自动重试。'; }
         }

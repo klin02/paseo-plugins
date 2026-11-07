@@ -10,6 +10,7 @@ export interface PageSnapshot {
   answerHash: string;
   completionId: string;
   generating: boolean;
+  focused?: boolean;
   cancellations: number;
   submissions: number;
   error: boolean;

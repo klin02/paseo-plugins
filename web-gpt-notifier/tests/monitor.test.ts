@@ -258,3 +258,73 @@ test('a visible original browser can be focused when the layout hides its tab st
     if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
   }
 });
+
+test('only a foreground visible conversation clears unread replies, without changing notification delivery', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const originalDocument = globals.document; const originalDesktop = globals.paseoDesktop;
+  const originalInterval = globalThis.setInterval; const originalClear = globalThis.clearInterval; const originalNow = Date.now;
+  let tick = () => {}; let now = 0; let focused = false; let visibility = 'visible'; let surface = true; let failRead = false;
+  const rect = { x: 10, y: 10, width: 1000, height: 700 };
+  let delivered = 0; let notices = 0;
+  const page: PageSnapshot = { documentId: 'doc', url: 'https://chatgpt.com/c/unread', title: 'Unread conversation',
+    promptKey: 'prompt', answerKey: 'reply', answerHash: 'hash', completionId: 'a'.repeat(64),
+    generating: false, focused: false, submissions: 0, cancellations: 0, error: false };
+  const view = { getAttribute: () => 'unread', getURL: () => page.url,
+    executeJavaScript: async (script: string) => {
+      if (script.includes('removeEventListener')) return null;
+      if (failRead) throw new Error('temporary read error');
+      return { ...page };
+    } };
+  const store = new TaskStore(); let stop = () => {};
+  const step = async (time: number) => { now = time; tick(); await settle(); };
+  try {
+    Date.now = () => now;
+    globals.document = { get visibilityState() { return visibility; }, hasFocus: () => focused,
+      querySelectorAll: () => [view], querySelector: (selector: string) => {
+        assert.equal(selector, '[data-paseo-browser-surface="unread"][aria-hidden="false"]');
+        return surface ? { getBoundingClientRect: () => rect } : null;
+      } };
+    globals.paseoDesktop = { notification: { sendNotification: async () => { notices++; return true; } } };
+    globalThis.setInterval = ((callback: () => void) => { tick = callback; return 1; }) as unknown as typeof setInterval;
+    globalThis.clearInterval = (() => {}) as typeof clearInterval;
+    const client = { rpc: async (contract: { name: string }) => {
+      if (contract.name === 'monitor.status') return { enabled: true, configured: true };
+      if (contract.name === 'completion.notify') { delivered++; return { status: 'sent' }; }
+      return {};
+    } } as unknown as PluginClientContext;
+    stop = startBrowserMonitor(client, true, store); await settle();
+    assert.equal(store.getSnapshot().tasks[0].unread, false, 'history is not an unread reply');
+    page.generating = true; await step(1000);
+    page.generating = false; await step(2000); await step(4000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true, 'background window does not acknowledge');
+    assert.equal(notices, 1); assert.equal(delivered, 1);
+    focused = true; visibility = 'hidden'; await step(5000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true, 'hidden window does not acknowledge');
+    visibility = 'visible'; surface = false; await step(6000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true, 'another workspace or tab does not acknowledge');
+    surface = true; rect.width = 0; await step(7000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true, 'zero-sized surface is not visible');
+    rect.width = 1000; rect.x = -1000; await step(8000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true, 'parked surface is not visible');
+    rect.x = 10; await step(9000);
+    page.completionId = 'c'.repeat(64); page.answerHash = 'late-render'; await step(10000);
+    assert.equal(store.getSnapshot().tasks[0].unread, false, 'the foreground conversation is read and later rendering cannot restore unread');
+    failRead = true; await step(11000); failRead = false; await step(12000);
+    assert.equal(store.getSnapshot().tasks[0].unread, false, 'temporary sampling errors do not restore unread');
+    focused = false; page.generating = true; page.promptKey = 'next-prompt'; page.completionId = 'b'.repeat(64); await step(13000);
+    page.generating = false; await step(14000); await step(16000);
+    assert.equal(store.getSnapshot().tasks[0].unread, true);
+    page.focused = true; await step(17000);
+    assert.equal(store.getSnapshot().tasks[0].unread, false, 'focus inside the embedded guest also counts');
+    assert.equal(notices, 2); assert.equal(delivered, 2, 'read changes neither cancel nor duplicate completion notices');
+    page.generating = true; page.promptKey = 'third-prompt'; page.completionId = 'd'.repeat(64); await step(18000);
+    page.generating = false; await step(19000); await step(21000);
+    assert.equal(store.getSnapshot().tasks[0].state, 'completed');
+    assert.equal(store.getSnapshot().tasks[0].unread, false, 'a reply completed while being viewed is read directly');
+    assert.equal(notices, 3); assert.equal(delivered, 3);
+  } finally {
+    stop(); globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; Date.now = originalNow;
+    if (originalDocument === undefined) delete globals.document; else globals.document = originalDocument;
+    if (originalDesktop === undefined) delete globals.paseoDesktop; else globals.paseoDesktop = originalDesktop;
+  }
+});

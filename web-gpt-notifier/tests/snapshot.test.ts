@@ -105,3 +105,14 @@ test('submission on a contenteditable composer does not require a legacy editor 
   f.state.handlers.keydown({ key: 'Enter', shiftKey: true, isComposing: false, target: { isContentEditable: true } });
   assert.equal((await f.read()).submissions, 1);
 });
+
+test('guest focus is reported only while the page is visible and focused', async () => {
+  const f = fixture();
+  assert.equal((await f.read()).focused, false);
+  vm.runInContext("document.visibilityState = 'visible'; document.hasFocus = () => true", f.context);
+  assert.equal((await f.read()).focused, true);
+  vm.runInContext("document.visibilityState = 'hidden'", f.context);
+  assert.equal((await f.read()).focused, false);
+  vm.runInContext("document.visibilityState = 'visible'; document.hasFocus = () => false", f.context);
+  assert.equal((await f.read()).focused, false);
+});

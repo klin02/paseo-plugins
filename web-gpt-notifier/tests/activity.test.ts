@@ -12,7 +12,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../client/activity.tsx
 }).outputText;
 type Element = { type: string | ((props: any) => Element); props: any };
 const jsx = (type: Element['type'], props: any): Element => ({ type, props });
-function harness() {
+function harness(focusResult: () => Promise<void> = async () => {}) {
   const effects: (() => void)[] = [];
   const runtime: Record<string, unknown> = {
     react: { useEffect: (effect: () => void) => effects.push(effect), useSyncExternalStore: (_: unknown, read: () => unknown) => read() },
@@ -35,11 +35,11 @@ function harness() {
     openScreen: (route: any) => routes.push(route),
   };
   const store = new TaskStore();
-  const cleanup = exports.registerActivityUi(client, store, async (id: string) => { focused.push(id); });
+  const cleanup = exports.registerActivityUi(client, store, async (id: string) => { focused.push(id); await focusResult(); });
   return { store, screens, sidebars, headers, routes, focused, cleanup, effects, removed: () => removed };
 }
-const task = (id: string, workspaceId: string | null, state: BrowserTask['state']): BrowserTask => ({
-  browserId: id, workspaceId, state, title: `Conversation ${id}`, url: `https://chatgpt.com/c/${id}`, updatedAt: 10,
+const task = (id: string, workspaceId: string | null, state: BrowserTask['state']): Omit<BrowserTask, 'unread'> => ({
+  browserId: id, workspaceId, state, completionId: state === 'completed' ? `reply-${id}` : null, title: `Conversation ${id}`, url: `https://chatgpt.com/c/${id}`, updatedAt: 10,
 });
 const props = (compact = false, dark = false) => ({
   theme: { colors: { foreground: dark ? '#fff' : '#111', foregroundMuted: dark ? '#aaa' : '#555', accent: '#08f', statusSuccess: dark ? '#6fcf97' : '#157a4d', surface0: dark ? '#111' : '#fff' } },
@@ -167,14 +167,14 @@ test('completed tasks show green checks in rows, sidebar and header until the ne
     const check = nodes.find(node => node.type === 'Icon');
     assert.equal(check?.props.icon, 'CircleCheck');
     assert.equal(check?.props.color, surface.theme.colors.statusSuccess);
-    const label = nodes.find(node => node.type === 'Text' && text(node) === '已完成');
+    const label = nodes.find(node => node.type === 'Text' && text(node) === '已完成未读');
     assert.equal(label?.props.style.color, surface.theme.colors.statusSuccess);
     const row = h.sidebars[0].Component(surface);
     const sidebarCheck = elements(row.props.trailing).find(node => node.type === 'Icon');
     assert.equal(sidebarCheck?.props.icon, 'CircleCheck');
     assert.equal(sidebarCheck?.props.color, surface.theme.colors.statusSuccess);
     assert.match(text(row.props.trailing), /1/);
-    assert.match(h.headers[0].button.title, /1 个已完成/);
+    assert.match(h.headers[0].button.title, /1 个已完成未读/);
     const header = elements(jsx(h.headers[0].button.icon, { ...surface, size: 16, color: '#555' }))[0];
     assert.equal(header.props.color, surface.theme.colors.statusSuccess);
   }
@@ -190,5 +190,47 @@ test('completed tasks show green checks in rows, sidebar and header until the ne
     assert.equal(elements(row.props.trailing).filter(node => node.type === 'Icon').length, 0, `${state} is not a completed result`);
     if (state !== 'running') assert.equal(h.headers[0].button.icon, 'Globe');
   }
+  h.cleanup();
+});
+
+
+test('opening the task list keeps replies unread until their original browser opens', async () => {
+  const h = harness();
+  h.store.upsert(task('done', 'workspace-a', 'completed'));
+  h.screens[0].Component(props());
+  for (const effect of h.effects.splice(0)) effect();
+  assert.equal(h.store.getSnapshot().tasks[0].unread, true);
+  h.screens[0].Component({ ...props(), params: { focus: 'done' }, navigation: { openWorkspace: () => {} } });
+  h.effects.pop()?.();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.store.getSnapshot().tasks[0].unread, false);
+  const nodes = elements(h.screens[0].Component(props()));
+  assert.match(text(nodes), /已读/);
+  assert.equal(nodes.find(node => node.type === 'Icon')?.props.color, props().theme.colors.foregroundMuted);
+  assert.equal(h.headers[0].button.icon, 'Globe');
+  assert.equal(elements(h.sidebars[0].Component(props()).props.trailing).some(node => node.type === 'Icon'), false);
+  h.cleanup();
+});
+
+test('failed browser focus leaves the completed reply unread', async () => {
+  const h = harness(async () => { throw new Error('tab closed'); });
+  h.store.upsert(task('done', 'workspace-a', 'completed'));
+  h.screens[0].Component({ ...props(), params: { focus: 'done' }, navigation: { openWorkspace: () => {} } });
+  h.effects.pop()?.();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.store.getSnapshot().tasks[0].unread, true);
+  assert.match(h.store.getSnapshot().error ?? '', /无法打开原标签页/);
+  h.cleanup();
+});
+
+test('slow browser focus acknowledges only the reply captured when opening began', async () => {
+  let finish = () => {};
+  const h = harness(() => new Promise<void>(resolve => { finish = resolve; }));
+  h.store.upsert(task('done', 'workspace-a', 'completed'));
+  h.screens[0].Component({ ...props(), params: { focus: 'done' }, navigation: { openWorkspace: () => {} } });
+  h.effects.pop()?.();
+  h.store.upsert({ ...task('done', 'workspace-a', 'completed'), completionId: 'newer-reply' });
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.store.getSnapshot().tasks[0].unread, true);
   h.cleanup();
 });
